@@ -5,12 +5,13 @@
 # ===========================================================================
 import torch
 
+
 class SFW(torch.optim.Optimizer):
     """Stochastic Frank Wolfe Algorithm
     Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        lmo (function): LMO instance (access it with lmo.oracle)
+        lmo (function): LMO instance (access it with lmo.lmo)
         learning_rate (float): learning rate between 0.0 and 1.0
         rescale (string or None): Type of learning_rate rescaling. Must be 'diameter', 'gradient' or None
         momentum (float): momentum factor, 0 for no momentum
@@ -59,7 +60,7 @@ class SFW(torch.optim.Optimizer):
                         param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1 - momentum)
                         d_p = param_state['momentum_buffer']
 
-                v = self.lmo.oracle(d_p)  # LMO optimal solution
+                v = self.lmo.lmo(d_p)  # LMO optimal solution
 
                 if self.grad_norm == 'diameter':
                     # Rescale lr by diameter
@@ -71,18 +72,19 @@ class SFW(torch.optim.Optimizer):
                     # No rescaling
                     factor = 1
 
-                lr = max(0.0, min(factor * group['lr'], 1.0)) # Clamp between [0, 1]
+                lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
 
                 p.mul_(1 - lr)
                 p.add_(v, alpha=lr)
         return loss
+
 
 class AdaGradSFW(torch.optim.Optimizer):
     """AdaGrad Stochastic Frank-Wolfe algorithm.
     Arguments:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        lmo (function): LMO oracle instance (access it with oracle.oracle)
+        lmo (function): LMO oracle instance (access it with lmo.lmo)
         inner_steps (integer, optional): number of inner iterations (default: 2)
         lr (float, optional): learning rate (default: 1e-2)
         delta (float, optional): term added to the denominator to improve
@@ -111,8 +113,6 @@ class AdaGradSFW(torch.optim.Optimizer):
             for p in group['params']:
                 param_state = self.state[p]
                 param_state['sum'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-
-
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -147,14 +147,16 @@ class AdaGradSFW(torch.optim.Optimizer):
 
                 y = p.detach().clone()
                 for idx in range(self.K):
-                    d_Q = d_p.addcmul(H, y-p, value=1./group['lr'])
-                    y_v_diff = y - self.lmo.oracle(d_Q)
-                    gamma = group['lr']*torch.div(torch.sum(torch.mul(d_Q, y_v_diff)), torch.sum(H.mul(torch.mul(y_v_diff, y_v_diff))))
-                    gamma = max(0.0, min(gamma, 1.0))   # Clamp between [0, 1]
+                    d_Q = d_p.addcmul(H, y - p, value=1. / group['lr'])
+                    y_v_diff = y - self.lmo.lmo(d_Q)
+                    gamma = group['lr'] * torch.div(torch.sum(torch.mul(d_Q, y_v_diff)),
+                                                    torch.sum(H.mul(torch.mul(y_v_diff, y_v_diff))))
+                    gamma = max(0.0, min(gamma, 1.0))  # Clamp between [0, 1]
 
                     y.add_(y_v_diff, alpha=-gamma)  # -gamma needed as we want to add v-y, not y-v
                 p.copy_(y)
         return loss
+
 
 class SGD(torch.optim.Optimizer):
     """Modified SGD which allows projection via LMO"""
@@ -227,6 +229,6 @@ class SGD(torch.optim.Optimizer):
 
                 # Project if necessary
                 if self.lmo:
-                    p.copy_(self.lmo.project(p))
+                    p.copy_(self.lmo.euclidean_project(p))
 
         return loss

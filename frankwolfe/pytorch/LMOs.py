@@ -6,17 +6,21 @@
 import torch
 import torch.nn.functional as F
 import math
+
 tolerance = 1e-10
+
 
 #### HELPER FUNCTIONS ####
 @torch.no_grad()
 def get_avg_init_norm(layer, param_type=None, ord=2, repetitions=100):
+    """Computes the average norm of default layer initialization"""
     output = 0
     for _ in range(repetitions):
         layer.reset_parameters()
         output += torch.norm(getattr(layer, param_type), p=ord).item()
 
     return float(output) / repetitions
+
 
 def convert_radius(r, N, in_ord=2, out_ord='inf'):
     """
@@ -25,14 +29,16 @@ def convert_radius(r, N, in_ord=2, out_ord='inf'):
     in N dimensions
     """
     in_ord = float('inf') if in_ord == 'inf' else in_ord
-    out_ord = float('inf') if out_ord =='inf' else out_ord
+    out_ord = float('inf') if out_ord == 'inf' else out_ord
 
-    in_ord_rec = 0.5 if in_ord == 1 else 1/in_ord
-    out_ord_rec = 0.5 if out_ord == 1 else 1/out_ord
+    in_ord_rec = 0.5 if in_ord == 1 else 1 / in_ord
+    out_ord_rec = 0.5 if out_ord == 1 else 1 / out_ord
 
-    return r * N**(out_ord_rec - in_ord_rec)
+    return r * N ** (out_ord_rec - in_ord_rec)
+
 
 def complementary_order(ord):
+    """Get the complementary order"""
     ord = float('inf') if ord == 'inf' else ord
 
     if ord == float('inf'):
@@ -40,7 +46,7 @@ def complementary_order(ord):
     elif ord == 1:
         return float('inf')
     elif ord >= 2:
-        return 1 / (1 - 1/ord)
+        return 1 / (1 - 1 / ord)
     else:
         raise NotImplementedError(f"Order {ord} not supported.")
 
@@ -48,13 +54,16 @@ def complementary_order(ord):
 #### LMO CLASSES ####
 class LpBall:
     """
-    oracle class for the Lp Ball (p=ord) with with L2-diameter diameter
+    LMO class for the Lp Ball (p=ord) with with L2-diameter diameter or radius. If width is passed instead of radius
+    or diameter, then the radius of each layer depends on its average initialization norm.
     """
+
     def __init__(self, diameter=None, radius=None, width=None, ord=2):
-        self.p = float('inf') if ord=='inf' else ord
+        self.p = float('inf') if ord == 'inf' else ord
 
         assert diameter is None or radius is None, "Both diameter and radius given."
-        assert (diameter is None and radius is None) or width is None, "Specify either diameter/radius or initialization width."
+        assert (
+                       diameter is None and radius is None) or width is None, "Specify either diameter/radius or initialization width."
 
         self.d = diameter
         self.r = radius
@@ -69,7 +78,8 @@ class LpBall:
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
-                                                                             type(getattr(layer, entry)) != type(None))]:
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
                     param = getattr(layer, param_type)
                     shape = param.shape
 
@@ -86,18 +96,17 @@ class LpBall:
         if self.initializerDependent:
             return self._radius_dict[shape]
         else:
-            return self.r or convert_radius(self.d/2, shape.numel(), in_ord=2, out_ord=self.p)
+            return self.r or convert_radius(self.d / 2, shape.numel(), in_ord=2, out_ord=self.p)
 
     @torch.no_grad()
     def get_diameter(self, shape):
         if self.initializerDependent:
             return self._diameter_dict[shape]
         else:
-            return self.d or 2*convert_radius(self.r, shape.numel(), in_ord=self.p, out_ord=2)
-
+            return self.d or 2 * convert_radius(self.r, shape.numel(), in_ord=self.p, out_ord=2)
 
     @torch.no_grad()
-    def oracle(self, x):
+    def lmo(self, x):
         """Returns v with norm(v, self.p) <= r minimizing v*x"""
         r = self.get_radius(x.shape)
         q = complementary_order(self.p)
@@ -117,10 +126,10 @@ class LpBall:
             return torch.full_like(x, fill_value=r).masked_fill_(x > 0, -r)
         else:
             sgn_x = torch.sign(x).masked_fill_(x == 0, 1.0)
-            absxqp = torch.pow(torch.abs(x), q/self.p)
-            x_norm = float(torch.pow(torch.norm(x, p=q), q/self.p))
+            absxqp = torch.pow(torch.abs(x), q / self.p)
+            x_norm = float(torch.pow(torch.norm(x, p=q), q / self.p))
             if x_norm > tolerance:
-                return -r/x_norm * sgn_x * absxqp
+                return -r / x_norm * sgn_x * absxqp
             else:
                 return torch.zeros_like(x)
 
@@ -134,7 +143,7 @@ class LpBall:
         return r * x.div(x_norm) if x_norm > r else x
 
     @torch.no_grad()
-    def project(self, x):
+    def euclidean_project(self, x):
         """Projects x to the closest (i.e. in L2-norm) point on the LpBall (p = 1, 2, inf) with radius r."""
         r = self.get_radius(x.shape)
 
@@ -157,21 +166,23 @@ class LpBall:
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
 
+
 class SparseBall:
     """
     # Polytopes with vertices v \in {0, +/- r}^n such that exactly k entries are nonzero
     # This is exactly the intersection of B_1(r*k) with B_inf(r)
     """
+
     def __init__(self, diameter=None, radius=None, width=None, k=1):
         self.k = k
 
         assert diameter is None or radius is None, "Both diameter and radius given"
         assert int(k) == k, "k must be integral"
-        assert (diameter is None and radius is None) or width is None, "Specify either diameter/radius or initialization width."
-
+        assert (
+                       diameter is None and radius is None) or width is None, "Specify either diameter/radius or initialization width."
 
         self.d = diameter
-        self.r = radius # This is the L2 radius and needs to be converted
+        self.r = radius  # This is the L2 radius and needs to be converted
         self.width = width
         self.initializerDependent = not (width is None)
 
@@ -195,7 +206,8 @@ class SparseBall:
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
-                                                                             type(getattr(layer, entry)) != type(None))]:
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
                     param = getattr(layer, param_type)
                     shape = param.shape
 
@@ -204,25 +216,26 @@ class SparseBall:
                         # Catch unlikely case that weight/bias is 0-initialized (e.g. BatchNorm does this)
                         avg_norm = 1.0
                     self._diameter_dict[shape] = 2.0 * self.width * avg_norm
-                    self._radius_dict[shape] = self.convert_sparseball_radius(self.width * avg_norm, torch.numel(param), in_ord=2,
-                                                              out_ord="SparseBall")
+                    self._radius_dict[shape] = self.convert_sparseball_radius(self.width * avg_norm, torch.numel(param),
+                                                                              in_ord=2,
+                                                                              out_ord="SparseBall")
 
     @torch.no_grad()
     def get_radius(self, shape):
         if self.initializerDependent:
             return self._radius_dict[shape]
         else:
-            return self.r or self.convert_sparseball_radius(self.d/2, shape.numel(), in_ord=2, out_ord='SparseBall')
+            return self.r or self.convert_sparseball_radius(self.d / 2, shape.numel(), in_ord=2, out_ord='SparseBall')
 
     @torch.no_grad()
     def get_diameter(self, shape):
         if self.initializerDependent:
             return self._diameter_dict[shape]
         else:
-            return self.d or 2*self.convert_sparseball_radius(self.r, shape.numel(), in_ord='SparseBall', out_ord=2)
+            return self.d or 2 * self.convert_sparseball_radius(self.r, shape.numel(), in_ord='SparseBall', out_ord=2)
 
     @torch.no_grad()
-    def oracle(self, x):
+    def lmo(self, x):
         """Returns v in Sparseball w/ radius r minimizing v*x"""
         r = self.get_radius(x.shape)
         v = torch.zeros_like(x)
@@ -238,19 +251,20 @@ class SparseBall:
         r = self.get_radius(x.shape)
         L1Norm = float(torch.norm(x, p=1))
         LinfNorm = float(torch.norm(x, p=float('inf')))
-        if L1Norm > r*self.k or LinfNorm > r:
+        if L1Norm > r * self.k or LinfNorm > r:
             x_norm = max(L1Norm, LinfNorm)
             x_unit = x.div(x_norm)
-            factor = min(math.floor(1./float(torch.norm(x_unit, p=float('inf')))), self.k)
+            factor = min(math.floor(1. / float(torch.norm(x_unit, p=float('inf')))), self.k)
             assert 1 <= factor <= self.k
             return factor * r * x_unit
         else:
             return x
 
     @torch.no_grad()
-    def project(self, x):
+    def euclidean_project(self, x):
         """Projects x to the closest (i.e. in L2-norm) point on the Sparseball with radius r."""
         raise NotImplementedError(f"Projection not implemented for SparseBall.")
+
 
 class KBall:
 
@@ -258,16 +272,16 @@ class KBall:
         self.k, self.radius = k, radius
 
         self.rhombus = LpBall(radius=radius, ord=1)
-        self.cube = LpBall(radius=radius/self.k, ord=float('inf'))
+        self.cube = LpBall(radius=radius / self.k, ord=float('inf'))
 
     @torch.no_grad()
     def get_diameter(self, shape):
         return max(self.rhombus.get_diameter(shape), self.cube.get_diameter(shape))
 
     @torch.no_grad()
-    def oracle(self, x):
-        rhombus_candidate = self.rhombus.oracle(x)
-        cube_candidate = self.cube.oracle(x)
+    def lmo(self, x):
+        rhombus_candidate = self.rhombus.lmo(x)
+        cube_candidate = self.cube.lmo(x)
 
         rhombus_value = torch.dot(rhombus_candidate.flatten(), x.flatten())
         cube_value = torch.dot(cube_candidate.flatten(), x.flatten())
@@ -282,16 +296,17 @@ class KBall:
     def k_norm(self, x):
         return float(torch.sum(torch.topk(torch.abs(x.flatten()), k=self.k).values))
 
+
 class ProbabilitySimplex:
     """
-    oracle class for the probability simplex, i.e. {x \in R^n| x_i >= 0, x_1 + .. + x_n = lambdaVal}
+    LMO class for the probability simplex, i.e. {x \in R^n| x_i >= 0, x_1 + .. + x_n = lambdaVal}
     """
 
     def __init__(self, lambdaVal=1):
         self.lambdaVal = lambdaVal
 
     @torch.no_grad()
-    def oracle(self, x):
+    def lmo(self, x):
         """Returns v in probability simplex minimizing v*x as follows:
         Returns tensor v of same shape as x where v_i = 1 if x_i = min{x_j}
         """
@@ -301,22 +316,23 @@ class ProbabilitySimplex:
         return v
 
     @torch.no_grad()
-    def project(self, x):
+    def shift_inside(self, x):
         """Projects x to the ProbabilitySimplex with radius lambdaVal using softmax.
         NOTE: This is some projection, although not the one mapping to minimum distance points.
         """
         return self.lambdaVal * F.softmax(x.view(-1), dim=-1).view(x.shape)
 
+
 class Permutahedron:
     """
-    oracle class for the permutahedron, i.e. conv{sigma([n]) | sigma permutation of [n]}
+    LMO class for the permutahedron, i.e. conv{sigma([n]) | sigma permutation of [n]}
     """
 
     def __init__(self):
         pass
 
     @torch.no_grad()
-    def oracle(self, x):
+    def lmo(self, x):
         """Returns v in permutahedron minimizing v*x"""
         sortIndices = torch.argsort(x.view(-1), descending=True)
         v = torch.zeros_like(sortIndices)
@@ -324,7 +340,7 @@ class Permutahedron:
         return v.view_as(x)
 
     @torch.no_grad()
-    def project(self, x):
+    def shift_inside(self, x):
         """Projects x to the permutahedron.
         NOTE: This is some projection, although not the one mapping to minimum distance points.
         """
