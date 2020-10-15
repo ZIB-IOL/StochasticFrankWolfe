@@ -45,7 +45,7 @@ class SFW(tf.keras.optimizers.Optimizer):
 
         if self.rescale is None:
             factormath_ops.cast(1. , var.dtype.base_dtype)
-        elif self.rescale == 'diameter'
+        elif self.rescale == 'diameter':
             factor = math_ops.cast(1. / self.feasible_region.get_diameter(var.shape), var.dtype.base_dtype)
         elif self.rescale == 'gradient':
             factor = math_ops.cast(tf.norm(modified_grad, ord=2) / tf.norm(vminvar, ord=2) , var.dtype.base_dtype)
