@@ -89,7 +89,14 @@ def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initia
 
     for var in model.trainable_variables:
         n = tf.size(var).numpy()
-        real_K = min( max(int(K), int(K_frac*n)), n)
+        if K_frac is None and K is None:
+            raise ValueError("Both K and K_frac are None")
+        elif K_frac is None:
+            real_K = min( int(K), n)
+        elif K is None:
+            real_K = min( mint(K_frac*n), n)
+        else:
+            real_K = min( max(int(K), int(K_frac*n)), n)
 
         if mode=='radius':
             constraint = KSparsePolytope(n, K=real_K, diameter=None, radius=radius)
