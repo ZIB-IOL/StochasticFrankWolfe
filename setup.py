@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name            = "ZIB-IOL",
+    name            = "frankwolfe-IOL",
     version         = "1.0.0",
     author          = "IOL Lab @ TUB/ZIB",
     author_email    = "spiegel@zib.de",
