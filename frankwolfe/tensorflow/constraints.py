@@ -26,18 +26,39 @@ def print_constraints(model, constraints):
         print(f"  shape is {var.shape}")
         print(f"  size is {constraint.n}")
         print(f"  constraint type is {type(constraint)}")
-        try: print(f"  order is {constraint.p}")
-        except: continue
         try: print(f"  radius is {constraint.get_radius()}")
-        except: continue
+        except: pass
         print(f"  diameter is {constraint.get_diameter()}")
+        try: print(f"  order is {constraint.p}")
+        except: pass
+        try: print(f"  K is {constraint.K}")
+        except: pass
         print("\n")
+
+def make_feasible(model, constraints):
+    trainable_vars_to_constraints = dict()
+
+    for var, constraint in zip(model.trainable_variables, constraints):
+        trainable_vars_to_constraints[var._shared_name] = constraint
+
+    complete_constraints = []
+
+    for var in model.variables:
+        complete_constraints.append( trainable_vars_to_constraints.get(var._shared_name, Unconstrained(tf.size(var).numpy())) )
+
+    counter = 0
+    for layer in model.layers:
+        new_weights = []
+        for w in layer.get_weights():
+            new_weights.append( complete_constraints[counter].shift_inside(w) )
+            counter += 1
+        layer.set_weights(new_weights)
 
 def create_unconstraints(model):
     constraints = []
 
     for var in model.trainable_variables:
-        n = np.prod(var.shape)
+        n = tf.size(var).numpy()
         constraints.append(Unconstrained(n))
 
     return constraints
@@ -46,7 +67,7 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization', initia
     constraints = []
 
     for var in model.trainable_variables:
-        n = np.prod(var.shape)
+        n = tf.size(var).numpy()
 
         if mode=='radius':
             constraint = LpBall(n, ord=ord, diameter=None, radius=value)
@@ -54,8 +75,30 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization', initia
             constraint = LpBall(n, ord=ord, diameter=value, radius=None)
         elif mode=='initialization':
             avg_norm = get_avg_init_norm(var.shape, initializer=initializer, ord=2)
-            diameter = 2.0*value*avg_norm
+            diameter = 2.0 * value * avg_norm
             constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
+        else:
+            raise ValueError(f"Unknown mode {mode}")
+
+        constraints.append(constraint)
+
+    return constraints
+
+def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization', initializer='glorot_uniform'):
+    constraints = []
+
+    for var in model.trainable_variables:
+        n = tf.size(var).numpy()
+        real_K = min( max(int(K), int(K_frac*n)), n)
+
+        if mode=='radius':
+            constraint = KSparsePolytope(n, K=real_K, diameter=None, radius=radius)
+        elif mode=='diameter':
+            constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
+        elif mode=='initialization':
+            avg_norm = get_avg_init_norm(var.shape, initializer=initializer, ord=2)
+            diameter = 2.0 * value * avg_norm
+            constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
         else:
             raise ValueError(f"Unknown mode {mode}")
 
@@ -68,35 +111,33 @@ class Constraint:
 
     def __init__(self, n):
         self.n = n
-        pass
 
     def get_diameter(self):
-        pass
+        return self._diameter
+
+    def get_radius(self):
+        try: return self._radius
+        except: raise ValueError("Tried to get radius from a constraint without one")
 
     def lmo(self, x):
-        assert np.prod(x.shape) == n, f"shape {x.shape} does not match dimension {n}"
-        pass
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
 
     def shift_inside(self, x):
-        assert np.prod(x.shape) == n, f"shape {x.shape} does not match dimension {n}"
-        pass
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
 
     def euclidean_project(self, x):
-        assert np.prod(x.shape) == n, f"shape {x.shape} does not match dimension {n}"
-        pass
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
 
 
 class Unconstrained(Constraint):
 
     def __init__(self, n):
         super().__init__(n)
-
-    def get_diameter(self):
-        return np.inf
+        self._diameter = np.inf
 
     def lmo(self, x):
         super().__init__(x)
-        raise ValueError("no lmo for unconstrained parameters")
+        raise NotImplementedError("no lmo for unconstrained parameters")
 
     def shift_inside(self, x):
         super().__init__(x)
@@ -128,14 +169,8 @@ class LpBall(Constraint):
         else:
             raise ValueError("Both diameter and radius given")
 
-    def get_diameter(self):
-        return self._diameter
-
-    def get_radius(self):
-        return self._radius
-
     def lmo(self, x):
-        super().__init__(x)
+        super().lmo(x)
         if self.p == 1:
             max_index = tf.math.argmax( tf.abs( tf.keras.backend.flatten(x) ) )
             indices = tf.range(0, tf.size(x), dtype=max_index.dtype)
@@ -159,13 +194,13 @@ class LpBall(Constraint):
             return tf.cond(xnorm > tolerance, normalize_fn, zero_fn)
 
     def shift_inside(self, x):
-        super().__init__(x)
+        super().shift_inside(x)
         x_norm = np.linalg.norm(x.flatten(), ord=self.p)
         if x_norm > self._radius: return self._radius * x / x_norm
         return x
 
     def euclidean_project(self, x):
-        super().__init__(x)
+        super().euclidean_project(x)
         if self.p == 1:
             def proj_x_fn():
                 sorted = tf.sort( tf.math.abs( tf.reshape(x, [-1]) ), direction='DESCENDING')
@@ -187,3 +222,45 @@ class LpBall(Constraint):
             return tf.cond(x_norm > self._radius, proj_x_fn, x_fn)
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
+
+
+class KSparsePolytope(Constraint):
+
+    def __init__(self, n, K=1, diameter=None, radius=None):
+        super().__init__(n)
+
+        self.K = min(K, n)
+
+        if diameter is None and radius is None:
+            raise ValueError("Neither diameter and radius given")
+        elif diameter is None:
+            self._radius = radius
+            self._diameter = 2.0 * radius * math.sqrt(self.K)
+        elif radius is None:
+            self._radius = diameter / (2.0 * math.sqrt(self.K))
+            self._diameter = diameter
+        else:
+            raise ValueError("Both diameter and radius given")
+
+    def lmo(self, x):
+        super().lmo(x)
+        _, max_indices = tf.math.top_k(tf.abs(tf.keras.backend.flatten(x)), k=self.K)
+        max_indices = tf.expand_dims(max_indices, -1)
+        max_values = tf.gather_nd(tf.keras.backend.flatten(x), max_indices)
+        return tf.reshape( tf.scatter_nd(max_indices, -self._radius * tf.sign(max_values), (self.n,)), x.shape)
+
+    def shift_inside(self, x):
+        super().shift_inside(x)
+        l1norm =  np.linalg.norm(x.flatten(), ord=1)
+        linfnorm = np.linalg.norm(x.flatten(), ord=np.inf)
+        if l1norm > self._radius * self.K or linfnorm > self._radius:
+            x_unit = x / max(l1norm, linfnorm)
+            factor = min(math.floor(1.0 / np.linalg.norm(x_unit.flatten(), ord=np.inf)), self.K)
+            assert 1 <= factor <= self.K
+            return factor * self._radius * x_unit
+        else:
+            return x
+
+    def euclidean_project(self, x):
+        super().euclidean_project(x)
+        raise NotImplementedError(f"Projection not implemented for K-sparse polytope")
