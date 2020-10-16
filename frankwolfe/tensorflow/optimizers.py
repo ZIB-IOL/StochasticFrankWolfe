@@ -1,48 +1,25 @@
 import tensorflow as tf
 import numpy as np
 
+import functools
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.framework import ops
-
-import abc
-import contextlib
-import functools
-
-import six
-
+from tensorflow.python.keras import backend_config
+from tensorflow.python.training import training_ops
 from tensorflow.python.distribute import distribution_strategy_context as distribute_ctx
 from tensorflow.python.distribute import parameter_server_strategy
 from tensorflow.python.distribute import reduce_util as ds_reduce_util
 from tensorflow.python.distribute import values as ds_values
-from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
-from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_util
 from tensorflow.python.keras import backend
-from tensorflow.python.keras import initializers
-from tensorflow.python.keras.engine import base_layer_utils
-from tensorflow.python.keras.optimizer_v2 import learning_rate_schedule
-from tensorflow.python.keras.utils import generic_utils
 from tensorflow.python.keras.utils import tf_utils
-from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import clip_ops
-from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import gradients
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import resource_variable_ops
-from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.saved_model import revived_types
-from tensorflow.python.training.tracking import base as trackable
-from tensorflow.python.training.tracking import tracking
 from tensorflow.python.util import nest
-from tensorflow.python.util import tf_inspect
-from tensorflow.python.util.tf_export import keras_export
 
 
 def _filter_grads(grads_vars_and_constraints):
