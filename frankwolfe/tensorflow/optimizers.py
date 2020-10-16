@@ -434,9 +434,8 @@ class SGD(ConstrainedOptimizer):
         else:
             var_update = state_ops.assign_sub(var, lr * modified_grad)
 
-        if constraint is not None:
-            project_op, was_projected = constraint.euclidean_project(var)
-            var_update = tf.cond(was_projected, true_fn=lambda: state_ops.assign(var, project_op), false_fn=lambda: var_update)
+        project_op, was_projected = constraint.euclidean_project(var)
+        var_update = tf.cond(was_projected, true_fn=lambda: state_ops.assign(var, project_op), false_fn=lambda: var_update)
 
         return var_update
 
