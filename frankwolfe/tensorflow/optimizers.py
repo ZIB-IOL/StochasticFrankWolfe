@@ -411,8 +411,8 @@ class SGD(ConstrainedOptimizer):
         else:
             var_update = state_ops.assign_sub(var, lr * modified_grad)
 
-        project_op, was_projected = constraint.euclidean_project(var)
-        return tf.cond(was_projected, true_fn=lambda: state_ops.assign(var, project_op), false_fn=lambda: var_update)
+        project_var, was_projected = constraint.euclidean_project(var)
+        return tf.cond(was_projected, true_fn=lambda: state_ops.assign(var, project_var), false_fn=lambda: var_update)
 
     def _create_slots(self, var_list):
         if self._momentum:
@@ -433,7 +433,7 @@ class SGD(ConstrainedOptimizer):
         return config
 
 
-class Adam(ConstrainedOptimizer):
+class Adam(fw.optimizers.ConstrainedOptimizer):
 
   def __init__(self,
                learning_rate=0.001,
@@ -530,8 +530,8 @@ class Adam(ConstrainedOptimizer):
           grad,
           use_locking=self._use_locking)
 
-    project_op, was_projected = constraint.euclidean_project(var)
-    return tf.cond(was_projected, true_fn=lambda: state_ops.assign(var, project_op), false_fn=lambda: var_update)
+    project_var, was_projected = constraint.euclidean_project(var)
+    return state_ops.assign(var, project_var)
 
   def get_config(self):
     config = super(Adam, self).get_config()
@@ -542,5 +542,164 @@ class Adam(ConstrainedOptimizer):
         'beta_2': self._serialize_hyperparameter('beta_2'),
         'epsilon': self.epsilon,
         'amsgrad': self.amsgrad,
+    })
+    return config
+
+
+class Adadelta(optimizer_v2.OptimizerV2):
+
+  def __init__(self,
+               learning_rate=0.001,
+               rho=0.95,
+               epsilon=1e-7,
+               name='Adadelta',
+               **kwargs):
+    super(Adadelta, self).__init__(name, **kwargs)
+    self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+    self._set_hyper('decay', self._initial_decay)
+    self._set_hyper('rho', rho)
+    self.epsilon = epsilon or backend_config.epsilon()
+
+  def _create_slots(self, var_list):
+    # Separate for-loops to respect the ordering of slot variables from v1.
+    for v in var_list:
+      self.add_slot(v, 'accum_grad')
+    for v in var_list:
+      self.add_slot(v, 'accum_var')
+
+  def _prepare_local(self, var_device, var_dtype, apply_state):
+    super(Adadelta, self)._prepare_local(var_device, var_dtype, apply_state)
+    apply_state[(var_device, var_dtype)].update(
+        dict(
+            epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+            rho=array_ops.identity(self._get_hyper('rho', var_dtype))))
+
+  def set_weights(self, weights):
+    params = self.weights
+    # Override set_weights for backward compatibility of Keras V1 optimizer
+    # since it does not include iteration at head of the weight list. Set
+    # iteration to 0.
+    if len(params) == len(weights) + 1:
+      weights = [np.array(0)] + weights
+    super(Adadelta, self).set_weights(weights)
+
+  def _resource_apply_dense(self, grad, var, apply_state=None):
+    var_device, var_dtype = var.device, var.dtype.base_dtype
+    coefficients = ((apply_state or {}).get((var_device, var_dtype))
+                    or self._fallback_apply_state(var_device, var_dtype))
+
+    accum_grad = self.get_slot(var, 'accum_grad')
+    accum_var = self.get_slot(var, 'accum_var')
+    var_update = training_ops.resource_apply_adadelta(
+        var.handle,
+        accum_grad.handle,
+        accum_var.handle,
+        coefficients['lr_t'],
+        coefficients['rho'],
+        coefficients['epsilon'],
+        grad,
+        use_locking=self._use_locking)
+
+    project_var, was_projected = constraint.euclidean_project(var)
+    return state_ops.assign(var, project_var)
+
+  def get_config(self):
+    config = super(Adadelta, self).get_config()
+    config.update({
+        'learning_rate': self._serialize_hyperparameter('learning_rate'),
+        'decay': self._serialize_hyperparameter('decay'),
+        'rho': self._serialize_hyperparameter('rho'),
+        'epsilon': self.epsilon,
+    })
+    return config
+
+
+class Adagrad(optimizer_v2.OptimizerV2):
+
+  def __init__(self,
+               learning_rate=0.001,
+               initial_accumulator_value=0.1,
+               epsilon=1e-7,
+               name='Adagrad',
+               **kwargs):
+    if initial_accumulator_value < 0.0:
+      raise ValueError('initial_accumulator_value must be non-negative: %s' %
+                       initial_accumulator_value)
+    if epsilon is None:
+      epsilon = backend_config.epsilon()
+    super(Adagrad, self).__init__(name, **kwargs)
+    self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+    self._set_hyper('decay', self._initial_decay)
+    self._initial_accumulator_value = initial_accumulator_value
+    self.epsilon = epsilon or backend_config.epsilon()
+
+  def _create_slots(self, var_list):
+    for var in var_list:
+      dtype = var.dtype.base_dtype
+      init = init_ops.constant_initializer(
+          self._initial_accumulator_value, dtype=dtype)
+      self.add_slot(var, 'accumulator', init)
+
+  def _prepare_local(self, var_device, var_dtype, apply_state):
+    super(Adagrad, self)._prepare_local(var_device, var_dtype, apply_state)
+    apply_state[(var_device, var_dtype)].update(
+        dict(
+            epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+            neg_lr_t=-apply_state[(var_device, var_dtype)]['lr_t'],
+            zero=array_ops.zeros((), dtype=dtypes.int64)))
+
+  def set_weights(self, weights):
+    params = self.weights
+    # Override set_weights for backward compatibility of Keras V1 optimizer
+    # since it does not include iteration at head of the weight list. Set
+    # iteration to 0.
+    if len(params) == len(weights) + 1:
+      weights = [np.array(0)] + weights
+    super(Adagrad, self).set_weights(weights)
+
+  @classmethod
+  def from_config(cls, config, custom_objects=None):
+    """Creates an optimizer from its config.
+    This method is the reverse of `get_config`,
+    capable of instantiating the same optimizer from the config
+    dictionary.
+    Arguments:
+        config: A Python dictionary, typically the output of get_config.
+        custom_objects: A Python dictionary mapping names to additional Python
+          objects used to create this optimizer, such as a function used for a
+          hyperparameter.
+    Returns:
+        An optimizer instance.
+    """
+    if 'initial_accumulator_value' not in config:
+      config['initial_accumulator_value'] = 0.1
+    if 'lr' in config:
+      config['learning_rate'] = config.pop('lr')
+    return cls(**config)
+
+  def _resource_apply_dense(self, grad, var, apply_state=None):
+    var_device, var_dtype = var.device, var.dtype.base_dtype
+    coefficients = ((apply_state or {}).get((var_device, var_dtype))
+                    or self._fallback_apply_state(var_device, var_dtype))
+
+    acc = self.get_slot(var, 'accumulator')
+    var_update = training_ops.resource_apply_adagrad_v2(
+        var.handle,
+        acc.handle,
+        coefficients['lr_t'],
+        coefficients['epsilon'],
+        grad,
+        use_locking=self._use_locking)
+
+    project_var, was_projected = constraint.euclidean_project(var)
+    return state_ops.assign(var, project_var)
+
+  def get_config(self):
+    config = super(Adagrad, self).get_config()
+    config.update({
+        'learning_rate': self._serialize_hyperparameter('learning_rate'),
+        'decay': self._serialize_hyperparameter('decay'),
+        'initial_accumulator_value': self._initial_accumulator_value,
+        'epsilon': self.epsilon,
     })
     return config
