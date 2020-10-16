@@ -502,7 +502,7 @@ class Adam(ConstrainedOptimizer):
     v = self.get_slot(var, 'v')
 
     if not self.amsgrad:
-      training_ops.resource_apply_adam(
+      var_update = training_ops.resource_apply_adam(
           var.handle,
           m.handle,
           v.handle,
@@ -516,7 +516,7 @@ class Adam(ConstrainedOptimizer):
           use_locking=self._use_locking)
     else:
       vhat = self.get_slot(var, 'vhat')
-      training_ops.resource_apply_adam_with_amsgrad(
+      var_update = training_ops.resource_apply_adam_with_amsgrad(
           var.handle,
           m.handle,
           v.handle,
