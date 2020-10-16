@@ -153,7 +153,7 @@ class Unconstrained(Constraint):
 
     def euclidean_project(self, x):
         super().__init__(x)
-        return x, False
+        return x, tf.constant(False, dtype=tf.bool)
 
 
 class LpBall(Constraint):
@@ -215,18 +215,18 @@ class LpBall(Constraint):
                 running_mean = (tf.math.cumsum(sorted, axis=0) - self._radius) / tf.range(1, tf.size(sorted)+1, dtype=sorted.dtype)
                 is_less_or_equal = tf.math.less_equal(sorted, running_mean)
                 idx = tf.size(is_less_or_equal) - tf.math.reduce_sum(tf.cast(is_less_or_equal, tf.int32)) - 1
-                return (tf.sign(x) * tf.math.maximum(tf.math.abs(x) - tf.gather(running_mean, idx), tf.zeros_like(x)), True)
-            x_fn = lambda: (x, False)
+                return (tf.sign(x) * tf.math.maximum(tf.math.abs(x) - tf.gather(running_mean, idx), tf.zeros_like(x)), tf.constant(True, dtype=tf.bool))
+            x_fn = lambda: (x, tf.constant(False, dtype=tf.bool))
             return tf.cond(tf.norm(x, ord=1) > self._radius, proj_x_fn, x_fn)
         elif self.p == 2:
             x_norm = tf.norm(x, ord=2)
-            proj_x_fn = lambda: (self._radius * x / x_norm, True)
-            x_fn = lambda: (x, False)
+            proj_x_fn = lambda: (self._radius * x / x_norm, tf.constant(True, dtype=tf.bool))
+            x_fn = lambda: (x, tf.constant(False, dtype=tf.bool))
             return tf.cond(x_norm > self._radius, proj_x_fn, x_fn)
         elif self.p == np.inf:
             x_norm = tf.norm(x, ord=np.inf)
-            proj_x_fn = lambda: (tf.clip_by_value(x, -self._radius, self._radius), True)
-            x_fn = lambda: (x, False)
+            proj_x_fn = lambda: (tf.clip_by_value(x, -self._radius, self._radius), tf.constant(True, dtype=tf.bool))
+            x_fn = lambda: (x, tf.constant(False, dtype=tf.bool))
             return tf.cond(x_norm > self._radius, proj_x_fn, x_fn)
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
