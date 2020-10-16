@@ -20,6 +20,7 @@ from tensorflow.python.keras.utils import tf_utils
 from tensorflow.python.ops import gradients
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util import nest
+from tensorflow.python.framework import dtypes
 
 
 def _filter_grads(grads_vars_and_constraints):
@@ -659,18 +660,6 @@ class Adagrad(ConstrainedOptimizer):
 
   @classmethod
   def from_config(cls, config, custom_objects=None):
-    """Creates an optimizer from its config.
-    This method is the reverse of `get_config`,
-    capable of instantiating the same optimizer from the config
-    dictionary.
-    Arguments:
-        config: A Python dictionary, typically the output of get_config.
-        custom_objects: A Python dictionary mapping names to additional Python
-          objects used to create this optimizer, such as a function used for a
-          hyperparameter.
-    Returns:
-        An optimizer instance.
-    """
     if 'initial_accumulator_value' not in config:
       config['initial_accumulator_value'] = 0.1
     if 'lr' in config:
