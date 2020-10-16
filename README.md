@@ -1,7 +1,8 @@
-# StochasticFrankWolfe
+# Stochastic Frank Wolfe library for TensorFlow and PyTorch
 
 
-### Deep Neural Network Training with Frank-Wolfe (`arXiv:2010.07243`)
+### Deep Neural Network Training with Frank-Wolfe (arXiv:2010.07243)
+*Authors: Sebastian Pokutta, Christoph Spiegel, Max Zimmer*
 
 * [arxiv.org/abs/2010.07243](https://arxiv.org/abs/2010.07243)
 * [Colab Notebook for visualization of constraints](https://colab.research.google.com/drive/1t-AbwNQSjNSCoOE0_snF9t-TkFTPClge?usp=sharing)
@@ -10,7 +11,8 @@
 * [Colab Notebook for large network training](https://colab.research.google.com/drive/1qDKhGVjN6eH2vGKNHC1lBp-ryMzYC38t?usp=sharing)
 
 
-### Projection-Free Adaptive Gradients for Large-Scale Optimization (`arXiv:2009.14114`)
+### Projection-Free Adaptive Gradients for Large-Scale Optimization (arXiv:2009.14114)
+*Authors: Cyrille W. Combettes, Christoph Spiegel, Sebastian Pokutta*
 
 * [arxiv.org/abs/2009.14114](https://arxiv.org/abs/2009.14114)
 * [Colab Notebook for ...](...)
