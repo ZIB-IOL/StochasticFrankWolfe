@@ -433,7 +433,7 @@ class SGD(ConstrainedOptimizer):
         return config
 
 
-class Adam(fw.optimizers.ConstrainedOptimizer):
+class Adam(ConstrainedOptimizer):
 
   def __init__(self,
                learning_rate=0.001,
@@ -546,7 +546,7 @@ class Adam(fw.optimizers.ConstrainedOptimizer):
     return config
 
 
-class Adadelta(optimizer_v2.OptimizerV2):
+class Adadelta(ConstrainedOptimizer):
 
   def __init__(self,
                learning_rate=0.001,
@@ -583,7 +583,7 @@ class Adadelta(optimizer_v2.OptimizerV2):
       weights = [np.array(0)] + weights
     super(Adadelta, self).set_weights(weights)
 
-  def _resource_apply_dense(self, grad, var, apply_state=None):
+  def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
     var_device, var_dtype = var.device, var.dtype.base_dtype
     coefficients = ((apply_state or {}).get((var_device, var_dtype))
                     or self._fallback_apply_state(var_device, var_dtype))
@@ -614,7 +614,7 @@ class Adadelta(optimizer_v2.OptimizerV2):
     return config
 
 
-class Adagrad(optimizer_v2.OptimizerV2):
+class Adagrad(ConstrainedOptimizer):
 
   def __init__(self,
                learning_rate=0.001,
@@ -677,7 +677,7 @@ class Adagrad(optimizer_v2.OptimizerV2):
       config['learning_rate'] = config.pop('lr')
     return cls(**config)
 
-  def _resource_apply_dense(self, grad, var, apply_state=None):
+  def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
     var_device, var_dtype = var.device, var.dtype.base_dtype
     coefficients = ((apply_state or {}).get((var_device, var_dtype))
                     or self._fallback_apply_state(var_device, var_dtype))
