@@ -15,5 +15,5 @@
 *Authors: Cyrille W. Combettes, Christoph Spiegel, Sebastian Pokutta*
 
 * [arxiv.org/abs/2009.14114](https://arxiv.org/abs/2009.14114)
-* [Colab Notebook for ...](...)
-* [Colab Notebook for ...](...)
+* [Colab Notebook for convex objectives](...) (not using this repository)
+* [Colab Notebook for non-convex objectives](https://colab.research.google.com/drive/16OU67J7c4M0LcQWrgR5Nd3oOf3n3A4K7)
