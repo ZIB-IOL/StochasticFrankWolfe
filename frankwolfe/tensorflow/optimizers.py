@@ -50,6 +50,9 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
 
     def __init__(self, name='ConstrainedOptimizer', **kwargs):
         super().__init__(name, **kwargs)
+        
+    def set_learning_rate(self, learning_rate):
+        self._set_hyper("learning_rate", learning_rate)
 
     def _aggregate_gradients(self, grads_vars_and_constraints):
             """Returns all-reduced gradients.
