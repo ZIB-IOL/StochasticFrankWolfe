@@ -40,6 +40,110 @@ def get_lp_complementary_order(ord):
     elif ord >= 2: return 1.0/(1.0 - 1.0/ord)
     else: raise NotImplementedError(f"Order {ord} not supported.")
 
+def print_constraints(model, constraints):
+    for idx, (name, param) in enumerate(model.named_parameters()):
+        constraint = constraints[idx]
+        print(f"variable {name}")
+        print(f"  shape is {param.shape}")
+        print(f"  size is {constraint.n}")
+        print(f"  constraint type is {type(constraint)}")
+        try: print(f"  radius is {constraint.get_radius()}")
+        except: pass
+        print(f"  diameter is {constraint.get_diameter()}")
+        try: print(f"  order is {constraint.p}")
+        except: pass
+        try: print(f"  K is {constraint.K}")
+        except: pass
+        print("\n")
+
+@torch.no_grad()
+def make_feasible(model, constraints):
+    for idx, (name, param) in enumerate(model.named_parameters()):
+        constraint = constraints[idx]
+        param.copy_(constraint.shift_inside(param))
+
+@torch.no_grad()
+def create_unconstraints(model):
+    return [Unconstrained(param.numel()) for name, param in model.named_parameters()]
+
+@torch.no_grad()
+def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
+    constraints = []
+
+    # Compute average init norms if necessary
+    init_norms = dict()
+    if mode == 'initialization':
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
+                                                                             type(getattr(layer, entry)) != type(None))]:
+                    param = getattr(layer, param_type)
+                    shape = param.shape
+
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    if avg_norm == 0.0:
+                        # Catch unlikely case that weight/bias is 0-initialized (e.g. BatchNorm does this)
+                        avg_norm = 1.0
+                    init_norms[shape] = avg_norm
+
+    for name, param in model.named_parameters():
+        n = param.numel()
+
+        if mode == 'radius':
+            constraint = LpBall(n, ord=ord, diameter=None, radius=value)
+        elif mode == 'diameter':
+            constraint = LpBall(n, ord=ord, diameter=value, radius=None)
+        elif mode == 'initialization':
+            diameter = 2.0 * value * init_norms[param.shape]
+            constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
+        else:
+            raise ValueError(f"Unknown mode {mode}")
+        constraints.append(constraint)
+    return constraints
+
+def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
+    constraints = []
+
+    # Compute average init norms if necessary
+    init_norms = dict()
+    if mode == 'initialization':
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
+                                                                             type(getattr(layer, entry)) != type(None))]:
+                    param = getattr(layer, param_type)
+                    shape = param.shape
+
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    if avg_norm == 0.0:
+                        # Catch unlikely case that weight/bias is 0-initialized (e.g. BatchNorm does this)
+                        avg_norm = 1.0
+                    init_norms[shape] = avg_norm
+
+    for name, param in model.named_parameters():
+        n = param.numel()
+
+        if K_frac is None and K is None:
+            raise ValueError("Both K and K_frac are None")
+        elif K_frac is None:
+            real_K = min(int(K),n)
+        elif K is None:
+            real_K = min(int(K_frac*n),n)
+        else:
+            real_K = min(max(int(K),int(K_frac*n)),n)
+
+        if mode=='radius':
+            constraint = KSparsePolytope(n, K=real_K, diameter=None, radius=value)
+        elif mode=='diameter':
+            constraint = KSparsePolytope(n, K=real_K, diameter=value, radius=None)
+        elif mode=='initialization':
+            diameter = 2.0 * value * init_norms[param.shape]
+            constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
+        else:
+            raise ValueError(f"Unknown mode {mode}")
+        constraints.append(constraint)
+    return constraints
+
 #### LMO BASE CLASSES ####
 class Constraint:
     """
