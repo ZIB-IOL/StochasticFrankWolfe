@@ -154,6 +154,9 @@ class Constraint:
         self.n = n
         self._diameter, self._radius = None, None
 
+    def is_unconstrained(self):
+        return False
+
     def get_diameter(self):
         return self._diameter
 
@@ -178,6 +181,9 @@ class Unconstrained(Constraint):
     def __init__(self, n):
         super().__init__(n)
         self._diameter = float('inf')
+
+    def is_unconstrained(self):
+        return True
 
     def lmo(self, x):
         super().__init__(x)
