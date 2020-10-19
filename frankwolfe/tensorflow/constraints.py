@@ -119,6 +119,7 @@ class Constraint:
 
     def __init__(self, n):
         self.n = n
+        self._diameter, self._radius = None, None
 
     def get_diameter(self):
         return self._diameter
@@ -128,13 +129,13 @@ class Constraint:
         except: raise ValueError("Tried to get radius from a constraint without one")
 
     def lmo(self, x):
-        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
     def shift_inside(self, x):
-        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
     def euclidean_project(self, x):
-        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {n}"
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
 
 class Unconstrained(Constraint):

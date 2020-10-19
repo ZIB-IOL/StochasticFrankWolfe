@@ -31,7 +31,7 @@ def _filter_grads(grads_vars_and_constraints):
     filtered = []
     vars_with_empty_grads = []
     for gvc in grads_vars_and_constraints:
-        grad = gvc[0]
+        grad, var, _ = gvc
         if grad is None:
             vars_with_empty_grads.append(var)
         else:
@@ -202,7 +202,7 @@ class SFW(ConstrainedOptimizer):
         vminvar = math_ops.subtract(v, var)
 
         if self.rescale is None:
-            factormath_ops.cast(1. , var.dtype.base_dtype)
+            factor = math_ops.cast(1. , var.dtype.base_dtype)
         elif self.rescale == 'diameter':
             factor = math_ops.cast(1. / constraint.get_diameter(), var.dtype.base_dtype)
         elif self.rescale == 'gradient':
