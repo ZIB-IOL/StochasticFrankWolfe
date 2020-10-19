@@ -238,13 +238,6 @@ class AdaSFW(ConstrainedOptimizer):
 
         self.K = kwargs.get('K', inner_steps)
 
-        self._momentum = False
-        if isinstance(momentum, ops.Tensor) or callable(momentum) or momentum > 0:
-            self._momentum = True
-        if isinstance(momentum, (int, float)) and (momentum < 0 or momentum > 1):
-            raise ValueError("`momentum` must be between [0, 1].")
-
-        self._set_hyper('momentum', kwargs.get('m', momentum))
         self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
         self._set_hyper('delta', kwargs.get('delta', delta))
 
@@ -252,14 +245,7 @@ class AdaSFW(ConstrainedOptimizer):
         self._set_hyper('learning_rate', learning_rate)
 
     def _resource_apply_dense(self, grad, var, constraint, apply_state):
-
-        if self._momentum:
-            m = math_ops.cast(self._get_hyper('momentum'), var.dtype.base_dtype)
-            momentum_var = self.get_slot(var, 'momentum')
-            grad = momentum_var.assign(math_ops.add(m * momentum_var, (1 - m) * grad))
-
-        else:
-            grad = ops.convert_to_tensor(grad, var.dtype.base_dtype)
+        grad = ops.convert_to_tensor(grad, var.dtype.base_dtype)
 
         learning_rate = math_ops.cast(self._get_hyper('learning_rate'), var.dtype.base_dtype)
         delta = math_ops.cast(self._get_hyper('delta'), var.dtype.base_dtype)
@@ -281,20 +267,15 @@ class AdaSFW(ConstrainedOptimizer):
         for var in var_list:
             self.add_slot(var, 'accumulator', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
             self.add_slot(var, 'y', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
-        if self._momentum:
-            for var in var_list:
-                self.add_slot(var, 'momentum', initializer="zeros")
 
     def _prepare_local(self, var_device, var_dtype, apply_state):
         super()._prepare_local(var_device, var_dtype, apply_state)
-        apply_state[(var_device, var_dtype)]['momentum'] = array_ops.identity(self._get_hyper('momentum', var_dtype))
 
     def get_config(self):
         config = super().get_config()
         config.update(dict(
             learning_rate      = self._serialize_hyperparameter('learning_rate'),
             delta    = self._serialize_hyperparameter('delta'),
-            momentum = self._serialize_hyperparameter('momentum'),
         ))
         return config
 
