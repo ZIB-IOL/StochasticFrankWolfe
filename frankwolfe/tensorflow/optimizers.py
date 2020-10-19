@@ -31,7 +31,8 @@ def _filter_grads(grads_vars_and_constraints):
     filtered = []
     vars_with_empty_grads = []
     for gvc in grads_vars_and_constraints:
-        grad, var, _ = gvc
+        grad = gvc[0]
+        var = gvc[1]
         if grad is None:
             vars_with_empty_grads.append(var)
         else:
@@ -50,7 +51,7 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
 
     def __init__(self, name='ConstrainedOptimizer', **kwargs):
         super().__init__(name, **kwargs)
-        
+
     def set_learning_rate(self, learning_rate):
         self._set_hyper("learning_rate", learning_rate)
 
