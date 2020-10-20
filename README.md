@@ -7,7 +7,7 @@
 * [arxiv.org/abs/2010.07243](https://arxiv.org/abs/2010.07243)
 * [Colab Notebook for visualization of constraints](https://colab.research.google.com/drive/1t-AbwNQSjNSCoOE0_snF9t-TkFTPClge)
 * [Colab Notebook for sparseness during training](https://colab.research.google.com/drive/1qDKhGVjN6eH2vGKNHC1lBp-ryMzYC38t)
-* [Colab Notebook for comparing stochastic Frank–Wolfe methods (coming)](...)
+* [Colab Notebook for comparing stochastic Frank–Wolfe methods](https://colab.research.google.com/drive/1BBoEZ5PZfNjIB1iLanPu08YKFdREtM84)
 * [Colab Notebook for large network training (coming)](,,,)
 
 
