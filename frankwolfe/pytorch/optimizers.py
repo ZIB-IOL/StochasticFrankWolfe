@@ -61,10 +61,10 @@ class SFW(torch.optim.Optimizer):
 
                 v = constraints[idx].lmo(d_p)  # LMO optimal solution
 
-                if self.grad_norm == 'diameter':
+                if self.rescale == 'diameter':
                     # Rescale lr by diameter
                     factor = 1. / constraints[idx].get_diameter(v.shape)
-                elif self.grad_norm == 'gradient':
+                elif self.rescale == 'gradient':
                     # Rescale lr by gradient
                     factor = torch.norm(d_p, p=2) / torch.norm(p - v, p=2)
                 else:
