@@ -8,7 +8,7 @@
 * [Colab Notebook for visualization of constraints (TensorFlow)](https://colab.research.google.com/drive/1t-AbwNQSjNSCoOE0_snF9t-TkFTPClge)
 * [Colab Notebook for sparseness during training (TensorFlow)](https://colab.research.google.com/drive/1qDKhGVjN6eH2vGKNHC1lBp-ryMzYC38t)
 * [Colab Notebook for comparing stochastic Frank–Wolfe methods (TensorFlow)](https://colab.research.google.com/drive/1BBoEZ5PZfNjIB1iLanPu08YKFdREtM84)
-* [Colab Notebook for large network training (PyTorch)](https://colab.research.google.com/drive/1HDelGW9-Qg20oIOGowqG8KV_mf0brjAS)
+* [Colab Notebook for large network training (PyTorch)](https://colab.research.google.com/drive/1F6EMYDSx29A_T9DEMuOhAtVW5rbxt05W)
 
 
 ### Projection-Free Adaptive Gradients for Large-Scale Optimization (arXiv:2009.14114)
