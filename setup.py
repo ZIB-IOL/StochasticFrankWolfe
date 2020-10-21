@@ -8,7 +8,7 @@ setuptools.setup(
     version         = "1.0.0",
     author          = "IOL Lab @ TUB/ZIB",
     author_email    = "spiegel@zib.de",
-    description     = "Pytorch and Tensorflow implementations of Stochastic Franl-Wolfe methods",
+    description     = "Pytorch and Tensorflow implementations of Stochastic Frank-Wolfe methods",
     url             = "github.com/ZIB-IOL/StochasticFrankWolfe",
     packages        = setuptools.find_packages(),
     classifiers     = [

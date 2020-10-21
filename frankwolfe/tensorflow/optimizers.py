@@ -1,3 +1,8 @@
+# ===========================================================================
+# Project:      StochasticFrankWolfe 2020 / IOL Lab @ ZIB
+# File:         tensorflow/optimizers.py
+# Description:  Tensorflow implementation of Stochastic Frank Wolfe, AdaGradSFW and SGD with projection
+# ===========================================================================
 import tensorflow as tf
 import numpy as np
 
@@ -40,14 +45,16 @@ def _filter_grads(grads_vars_and_constraints):
     filtered = tuple(filtered)
     if not filtered:
         raise ValueError("No gradients provided for any variable: %s." %
-                                         ([v.name for _, v in grads_vars_and_constraints],))
+                         ([v.name for _, v in grads_vars_and_constraints],))
     if vars_with_empty_grads:
         logging.warning(
-                ("Gradients do not exist for variables %s when minimizing the loss."),
-                ([v.name for v in vars_with_empty_grads]))
+            "Gradients do not exist for variables %s when minimizing the loss.",
+            ([v.name for v in vars_with_empty_grads]))
     return filtered
 
+
 class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
+    """Base class for Constrained Optimizers"""
 
     def __init__(self, name='ConstrainedOptimizer', **kwargs):
         super().__init__(name, **kwargs)
@@ -56,33 +63,34 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
         self._set_hyper("learning_rate", learning_rate)
 
     def _aggregate_gradients(self, grads_vars_and_constraints):
-            """Returns all-reduced gradients.
+        """Returns all-reduced gradients.
             Args:
                 grads_vars_and_constraints: List of (gradient, variable, constraint) pairs.
             Returns:
                 A list of all-reduced gradients.
             """
-            grads_and_vars = [(g,v) for g,v,_ in grads_vars_and_constraints]
-            filtered_grads_and_vars = _filter_grads(grads_and_vars)
-            def all_reduce_fn(distribution, grads_and_vars):
-                return distribution.extended.batch_reduce_to(
-                        ds_reduce_util.ReduceOp.SUM, grads_and_vars)
+        grads_and_vars = [(g, v) for g, v, _ in grads_vars_and_constraints]
+        filtered_grads_and_vars = _filter_grads(grads_and_vars)
 
-            if filtered_grads_and_vars:
-                reduced = distribute_ctx.get_replica_context().merge_call(
-                        all_reduce_fn, args=(filtered_grads_and_vars,))
+        def all_reduce_fn(distribution, grads_and_vars):
+            return distribution.extended.batch_reduce_to(
+                ds_reduce_util.ReduceOp.SUM, grads_and_vars)
+
+        if filtered_grads_and_vars:
+            reduced = distribute_ctx.get_replica_context().merge_call(
+                all_reduce_fn, args=(filtered_grads_and_vars,))
+        else:
+            reduced = []
+        reduced_with_nones = []
+        reduced_pos = 0
+        for g, _ in grads_and_vars:
+            if g is None:
+                reduced_with_nones.append(None)
             else:
-                reduced = []
-            reduced_with_nones = []
-            reduced_pos = 0
-            for g, _ in grads_and_vars:
-                if g is None:
-                    reduced_with_nones.append(None)
-                else:
-                    reduced_with_nones.append(reduced[reduced_pos])
-                    reduced_pos += 1
-            assert reduced_pos == len(reduced), "Failed to add all gradients"
-            return reduced_with_nones
+                reduced_with_nones.append(reduced[reduced_pos])
+                reduced_pos += 1
+        assert reduced_pos == len(reduced), "Failed to add all gradients"
+        return reduced_with_nones
 
     def _distributed_apply(self, distribution, grads_vars_and_constraints, name, apply_state):
         """`apply_gradients` using a `DistributionStrategy`."""
@@ -96,11 +104,11 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
             if isinstance(grad, ops.IndexedSlices):
                 if var.constraint is not None:
                     raise RuntimeError(
-                            "Cannot use a constraint function on a sparse variable.")
+                        "Cannot use a constraint function on a sparse variable.")
                 if "apply_state" in self._sparse_apply_args:
                     apply_kwargs["apply_state"] = apply_state
                 return self._resource_apply_sparse_duplicate_indices(
-                        grad.values, var, grad.indices, **apply_kwargs)
+                    grad.values, var, grad.indices, **apply_kwargs)
 
             if "apply_state" in self._dense_apply_args:
                 apply_kwargs["apply_state"] = apply_state
@@ -118,12 +126,12 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
                 grad = nest.map_structure(_assume_mirrored, grad)
                 with distribution.extended.colocate_vars_with(var):
                     with ops.name_scope("update" if eagerly_outside_functions else
-                                                            "update_" + var.op.name, skip_on_eager=True):
+                                        "update_" + var.op.name, skip_on_eager=True):
                         update_ops.extend(distribution.extended.update(
-                                var, apply_grad_to_update_var, args=(grad, constraint), group=False))
+                            var, apply_grad_to_update_var, args=(grad, constraint), group=False))
 
             any_symbolic = any(isinstance(i, ops.Operation) or
-                                                 tf_utils.is_symbolic_tensor(i) for i in update_ops)
+                               tf_utils.is_symbolic_tensor(i) for i in update_ops)
             if not context.executing_eagerly() or any_symbolic:
                 with ops._get_graph_from_inputs(update_ops).as_default():
                     with ops.control_dependencies(update_ops):
@@ -145,17 +153,17 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
 
             if distribute_ctx.in_cross_replica_context():
                 raise RuntimeError(
-                        "`apply_gradients() cannot be called in cross-replica context. "
-                        "Use `tf.distribute.Strategy.run` to enter replica "
-                        "context.")
+                    "`apply_gradients() cannot be called in cross-replica context. "
+                    "Use `tf.distribute.Strategy.run` to enter replica "
+                    "context.")
 
             strategy = distribute_ctx.get_strategy()
             if (not experimental_aggregate_gradients and strategy and isinstance(
                     strategy.extended,
                     parameter_server_strategy.ParameterServerStrategyExtended)):
                 raise NotImplementedError(
-                        "`experimental_aggregate_gradients=False is not supported for "
-                        "ParameterServerStrategy and CentralStorageStrategy")
+                    "`experimental_aggregate_gradients=False is not supported for "
+                    "ParameterServerStrategy and CentralStorageStrategy")
 
             apply_state = self._prepare(var_list)
             if experimental_aggregate_gradients:
@@ -163,14 +171,20 @@ class ConstrainedOptimizer(tf.keras.optimizers.Optimizer):
                 var_list = [v for _, v, _ in grads_vars_and_constraints]
                 grads_vars_and_constraints = list(zip(reduced_grads, var_list, constraint_list))
             return distribute_ctx.get_replica_context().merge_call(
-                    functools.partial(self._distributed_apply, apply_state=apply_state),
-                    args=(grads_vars_and_constraints,),
-                    kwargs={
-                            "name": name,
-                    })
+                functools.partial(self._distributed_apply, apply_state=apply_state),
+                args=(grads_vars_and_constraints,),
+                kwargs={
+                    "name": name,
+                })
 
 
 class SFW(ConstrainedOptimizer):
+    """Stochastic Frank Wolfe Algorithm
+    Args:
+        learning_rate (float): learning rate between 0.0 and 1.0
+        momentum (float): momentum factor, 0 for no momentum
+        rescale (string or None): Type of learning_rate rescaling. Must be 'diameter', 'gradient' or None
+    """
 
     def __init__(self, learning_rate=0.1, momentum=0.9, rescale='diameter', name='SFW', **kwargs):
         super().__init__(name, **kwargs)
@@ -203,14 +217,14 @@ class SFW(ConstrainedOptimizer):
         vminvar = math_ops.subtract(v, var)
 
         if self.rescale is None:
-            factor = math_ops.cast(1. , var.dtype.base_dtype)
+            factor = math_ops.cast(1., var.dtype.base_dtype)
         elif self.rescale == 'diameter':
             factor = math_ops.cast(1. / constraint.get_diameter(), var.dtype.base_dtype)
         elif self.rescale == 'gradient':
-            factor = math_ops.cast(tf.norm(modified_grad, ord=2) / tf.norm(vminvar, ord=2) , var.dtype.base_dtype)
-        clipped_lr = math_ops.ClipByValue(t=lr*factor, clip_value_min=0, clip_value_max=1)
+            factor = math_ops.cast(tf.norm(modified_grad, ord=2) / tf.norm(vminvar, ord=2), var.dtype.base_dtype)
+        clipped_lr = math_ops.ClipByValue(t=lr * factor, clip_value_min=0, clip_value_max=1)
 
-        update_ops.append( state_ops.assign_add(var, clipped_lr * vminvar) )
+        update_ops.append(state_ops.assign_add(var, clipped_lr * vminvar))
 
         return control_flow_ops.group(*update_ops)
 
@@ -233,6 +247,14 @@ class SFW(ConstrainedOptimizer):
 
 
 class AdaSFW(ConstrainedOptimizer):
+    """AdaGrad Stochastic Frank-Wolfe algorithm.
+    Arguments:
+        learning_rate (float, optional): learning rate (default: 1e-2)
+        inner_steps (integer, optional): number of inner iterations (default: 2)
+        delta (float, optional): term added to the denominator to improve
+            numerical stability (default: 1e-10)
+    """
+
     def __init__(self, learning_rate=0.01, inner_steps=2, delta=1e-8, name='AdaSFW', **kwargs):
         super().__init__(name, **kwargs)
 
@@ -250,23 +272,28 @@ class AdaSFW(ConstrainedOptimizer):
         learning_rate = math_ops.cast(self._get_hyper('learning_rate'), var.dtype.base_dtype)
         delta = math_ops.cast(self._get_hyper('delta'), var.dtype.base_dtype)
         accumulator = state_ops.assign_add(self.get_slot(var, "accumulator"), math_ops.square(grad))
-        H = math_ops.add( delta, math_ops.sqrt( accumulator ) )
+        H = math_ops.add(delta, math_ops.sqrt(accumulator))
         y = state_ops.assign(self.get_slot(var, "y"), var)
 
         for idx in range(self.K):
-            delta_q = math_ops.add(grad, math_ops.multiply(H, math_ops.divide(math_ops.subtract(y, var), learning_rate)))
+            delta_q = math_ops.add(grad,
+                                   math_ops.multiply(H, math_ops.divide(math_ops.subtract(y, var), learning_rate)))
             v = ops.convert_to_tensor(constraint.lmo(delta_q), var.dtype.base_dtype)
             vy_diff = math_ops.subtract(v, y)
-            gamma_unclipped = math_ops.divide(math_ops.reduce_sum( - learning_rate * math_ops.multiply(delta_q, vy_diff)),  math_ops.reduce_sum( math_ops.multiply(H, math_ops.square(vy_diff))))
+            gamma_unclipped = math_ops.divide(
+                math_ops.reduce_sum(- learning_rate * math_ops.multiply(delta_q, vy_diff)),
+                math_ops.reduce_sum(math_ops.multiply(H, math_ops.square(vy_diff))))
             gamma = math_ops.ClipByValue(t=gamma_unclipped, clip_value_min=0, clip_value_max=1)
-            y = state_ops.assign_add(y,  gamma * vy_diff)
+            y = state_ops.assign_add(y, gamma * vy_diff)
 
         return state_ops.assign(var, y)
 
     def _create_slots(self, var_list):
         for var in var_list:
-            self.add_slot(var, 'accumulator', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
-            self.add_slot(var, 'y', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
+            self.add_slot(var, 'accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+            self.add_slot(var, 'y',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
 
     def _prepare_local(self, var_device, var_dtype, apply_state):
         super()._prepare_local(var_device, var_dtype, apply_state)
@@ -274,8 +301,8 @@ class AdaSFW(ConstrainedOptimizer):
     def get_config(self):
         config = super().get_config()
         config.update(dict(
-            learning_rate      = self._serialize_hyperparameter('learning_rate'),
-            delta    = self._serialize_hyperparameter('delta'),
+            learning_rate=self._serialize_hyperparameter('learning_rate'),
+            delta=self._serialize_hyperparameter('delta'),
         ))
         return config
 
@@ -298,53 +325,62 @@ class AdamSFW(ConstrainedOptimizer):
 
         b1 = math_ops.cast(self._get_hyper('beta1'), var.dtype.base_dtype)
         m_accumulator = self.get_slot(var, "m_accumulator")
-        m_accumulator.assign(b1*m_accumulator + (1-b1)*grad)
+        m_accumulator.assign(b1 * m_accumulator + (1 - b1) * grad)
 
         b2 = math_ops.cast(self._get_hyper('beta2'), var.dtype.base_dtype)
         v_accumulator = self.get_slot(var, "v_accumulator")
-        v_accumulator.assign(b2*v_accumulator + (1-b2)*math_ops.square(grad))
+        v_accumulator.assign(b2 * v_accumulator + (1 - b2) * math_ops.square(grad))
 
         vhat_accumulator = self.get_slot(var, "vhat_accumulator")
         vhat_accumulator.assign(tf.math.maximum(vhat_accumulator, v_accumulator))
 
         delta = math_ops.cast(self._get_hyper('delta'), var.dtype.base_dtype)
-        H = math_ops.add( delta, math_ops.sqrt( vhat_accumulator ) )
+        H = math_ops.add(delta, math_ops.sqrt(vhat_accumulator))
 
         learning_rate = math_ops.cast(self._get_hyper('learning_rate'), var.dtype.base_dtype)
 
         y = state_ops.assign(self.get_slot(var, "y"), var)
 
         for idx in range(self.K):
-            delta_q = math_ops.add(m_accumulator, math_ops.multiply(H, math_ops.divide(math_ops.subtract(y, var), learning_rate)))
+            delta_q = math_ops.add(m_accumulator,
+                                   math_ops.multiply(H, math_ops.divide(math_ops.subtract(y, var), learning_rate)))
             v = ops.convert_to_tensor(constraint.lmo(delta_q), var.dtype.base_dtype)
             vy_diff = math_ops.subtract(v, y)
-            gamma_unclipped = math_ops.divide(math_ops.reduce_sum( - learning_rate * math_ops.multiply(delta_q, vy_diff)),  math_ops.reduce_sum( math_ops.multiply(H, math_ops.square(vy_diff))))
+            gamma_unclipped = math_ops.divide(
+                math_ops.reduce_sum(- learning_rate * math_ops.multiply(delta_q, vy_diff)),
+                math_ops.reduce_sum(math_ops.multiply(H, math_ops.square(vy_diff))))
             gamma = math_ops.ClipByValue(t=gamma_unclipped, clip_value_min=0, clip_value_max=1)
-            y = state_ops.assign_add(y,  gamma * vy_diff)
+            y = state_ops.assign_add(y, gamma * vy_diff)
 
         return state_ops.assign(var, y)
 
     def _create_slots(self, var_list):
         for var in var_list:
-            self.add_slot(var, 'm_accumulator', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
-            self.add_slot(var, 'v_accumulator', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
-            self.add_slot(var, 'vhat_accumulator', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
-            self.add_slot(var, 'y', init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))#, initializer="zeros")
+            self.add_slot(var, 'm_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+            self.add_slot(var, 'v_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+            self.add_slot(var, 'vhat_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+            self.add_slot(var, 'y',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
 
     def get_config(self):
         config = super().get_config()
         config.update(dict(
-            learning_rate = self._serialize_hyperparameter('learning_rate'),
-            delta         = self._serialize_hyperparameter('delta'),
-            beta1         = self._serialize_hyperparameter('beta1'),
-            beta2         = self._serialize_hyperparameter('beta2'),
+            learning_rate=self._serialize_hyperparameter('learning_rate'),
+            delta=self._serialize_hyperparameter('delta'),
+            beta1=self._serialize_hyperparameter('beta1'),
+            beta2=self._serialize_hyperparameter('beta2'),
         ))
         return config
 
 
 class SGD(ConstrainedOptimizer):
+    """Modified SGD which allows projection via Constraint class"""
 
-    def __init__(self, learning_rate=0.01, momentum=0.0, momentum_style='pytorch_convex', weight_decay=0.0, name='SGD', **kwargs):
+    def __init__(self, learning_rate=0.01, momentum=0.0, momentum_style='pytorch_convex', weight_decay=0.0, name='SGD',
+                 **kwargs):
         super().__init__(name, **kwargs)
 
         self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
@@ -370,9 +406,9 @@ class SGD(ConstrainedOptimizer):
         if self._weight_decay:
             wd = math_ops.cast(self._get_hyper('weight_decay'), var.dtype.base_dtype)
             if self._logging:
-              self.get_slot(var, "log.weight_decay").assign_add(wd * lr)
-              self.get_slot(var, "log.decoupled_weight_decay").assign_add(wd)
-            modified_grad = tf.math.add(grad, wd*var)
+                self.get_slot(var, "log.weight_decay").assign_add(wd * lr)
+                self.get_slot(var, "log.decoupled_weight_decay").assign_add(wd)
+            modified_grad = tf.math.add(grad, wd * var)
         else:
             modified_grad = grad
 
@@ -382,13 +418,13 @@ class SGD(ConstrainedOptimizer):
 
             if 'original' in self._momentum_style:
                 if 'convex' in self._momentum_style:
-                    momentum_var.assign(math_ops.add(m * momentum_var, (1-m) * lr * modified_grad))
+                    momentum_var.assign(math_ops.add(m * momentum_var, (1 - m) * lr * modified_grad))
                 else:
                     momentum_var.assign(math_ops.add(m * momentum_var, lr * modified_grad))
                 var_update = state_ops.assign_sub(var, momentum_var)
             elif 'pytorch' in self._momentum_style:
                 if 'convex' in self._momentum_style:
-                    momentum_var.assign(math_ops.add(m * momentum_var, (1-m) * modified_grad))
+                    momentum_var.assign(math_ops.add(m * momentum_var, (1 - m) * modified_grad))
                 else:
                     momentum_var.assign(math_ops.add(m * momentum_var, modified_grad))
                 var_update = state_ops.assign_sub(var, lr * momentum_var)
@@ -421,259 +457,259 @@ class SGD(ConstrainedOptimizer):
 
 class Adam(ConstrainedOptimizer):
 
-  def __init__(self,
-               learning_rate=0.001,
-               beta_1=0.9,
-               beta_2=0.999,
-               epsilon=1e-7,
-               amsgrad=False,
-               name='Adam',
-               **kwargs):
-    super(Adam, self).__init__(name, **kwargs)
-    self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
-    self._set_hyper('decay', self._initial_decay)
-    self._set_hyper('beta_1', beta_1)
-    self._set_hyper('beta_2', beta_2)
-    self.epsilon = epsilon or backend_config.epsilon()
-    self.amsgrad = amsgrad
+    def __init__(self,
+                 learning_rate=0.001,
+                 beta_1=0.9,
+                 beta_2=0.999,
+                 epsilon=1e-7,
+                 amsgrad=False,
+                 name='Adam',
+                 **kwargs):
+        super(Adam, self).__init__(name, **kwargs)
+        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+        self._set_hyper('decay', self._initial_decay)
+        self._set_hyper('beta_1', beta_1)
+        self._set_hyper('beta_2', beta_2)
+        self.epsilon = epsilon or backend_config.epsilon()
+        self.amsgrad = amsgrad
 
-  def _create_slots(self, var_list):
-    # Create slots for the first and second moments.
-    # Separate for-loops to respect the ordering of slot variables from v1.
-    for var in var_list:
-      self.add_slot(var, 'm')
-    for var in var_list:
-      self.add_slot(var, 'v')
-    if self.amsgrad:
-      for var in var_list:
-        self.add_slot(var, 'vhat')
+    def _create_slots(self, var_list):
+        # Create slots for the first and second moments.
+        # Separate for-loops to respect the ordering of slot variables from v1.
+        for var in var_list:
+            self.add_slot(var, 'm')
+        for var in var_list:
+            self.add_slot(var, 'v')
+        if self.amsgrad:
+            for var in var_list:
+                self.add_slot(var, 'vhat')
 
-  def _prepare_local(self, var_device, var_dtype, apply_state):
-    super(Adam, self)._prepare_local(var_device, var_dtype, apply_state)
+    def _prepare_local(self, var_device, var_dtype, apply_state):
+        super(Adam, self)._prepare_local(var_device, var_dtype, apply_state)
 
-    local_step = math_ops.cast(self.iterations + 1, var_dtype)
-    beta_1_t = array_ops.identity(self._get_hyper('beta_1', var_dtype))
-    beta_2_t = array_ops.identity(self._get_hyper('beta_2', var_dtype))
-    beta_1_power = math_ops.pow(beta_1_t, local_step)
-    beta_2_power = math_ops.pow(beta_2_t, local_step)
-    lr = (apply_state[(var_device, var_dtype)]['lr_t'] *
-          (math_ops.sqrt(1 - beta_2_power) / (1 - beta_1_power)))
-    apply_state[(var_device, var_dtype)].update(
-        dict(
-            lr=lr,
-            epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
-            beta_1_t=beta_1_t,
-            beta_1_power=beta_1_power,
-            one_minus_beta_1_t=1 - beta_1_t,
-            beta_2_t=beta_2_t,
-            beta_2_power=beta_2_power,
-            one_minus_beta_2_t=1 - beta_2_t))
+        local_step = math_ops.cast(self.iterations + 1, var_dtype)
+        beta_1_t = array_ops.identity(self._get_hyper('beta_1', var_dtype))
+        beta_2_t = array_ops.identity(self._get_hyper('beta_2', var_dtype))
+        beta_1_power = math_ops.pow(beta_1_t, local_step)
+        beta_2_power = math_ops.pow(beta_2_t, local_step)
+        lr = (apply_state[(var_device, var_dtype)]['lr_t'] *
+              (math_ops.sqrt(1 - beta_2_power) / (1 - beta_1_power)))
+        apply_state[(var_device, var_dtype)].update(
+            dict(
+                lr=lr,
+                epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+                beta_1_t=beta_1_t,
+                beta_1_power=beta_1_power,
+                one_minus_beta_1_t=1 - beta_1_t,
+                beta_2_t=beta_2_t,
+                beta_2_power=beta_2_power,
+                one_minus_beta_2_t=1 - beta_2_t))
 
-  def set_weights(self, weights):
-    params = self.weights
-    # If the weights are generated by Keras V1 optimizer, it includes vhats
-    # even without amsgrad, i.e, V1 optimizer has 3x + 1 variables, while V2
-    # optimizer has 2x + 1 variables. Filter vhats out for compatibility.
-    num_vars = int((len(params) - 1) / 2)
-    if len(weights) == 3 * num_vars + 1:
-      weights = weights[:len(params)]
-    super(Adam, self).set_weights(weights)
+    def set_weights(self, weights):
+        params = self.weights
+        # If the weights are generated by Keras V1 optimizer, it includes vhats
+        # even without amsgrad, i.e, V1 optimizer has 3x + 1 variables, while V2
+        # optimizer has 2x + 1 variables. Filter vhats out for compatibility.
+        num_vars = int((len(params) - 1) / 2)
+        if len(weights) == 3 * num_vars + 1:
+            weights = weights[:len(params)]
+        super(Adam, self).set_weights(weights)
 
-  def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
-    var_device, var_dtype = var.device, var.dtype.base_dtype
-    coefficients = ((apply_state or {}).get((var_device, var_dtype))
-                    or self._fallback_apply_state(var_device, var_dtype))
+    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
+        var_device, var_dtype = var.device, var.dtype.base_dtype
+        coefficients = ((apply_state or {}).get((var_device, var_dtype))
+                        or self._fallback_apply_state(var_device, var_dtype))
 
-    m = self.get_slot(var, 'm')
-    v = self.get_slot(var, 'v')
+        m = self.get_slot(var, 'm')
+        v = self.get_slot(var, 'v')
 
-    if not self.amsgrad:
-      var_update = training_ops.resource_apply_adam(
-          var.handle,
-          m.handle,
-          v.handle,
-          coefficients['beta_1_power'],
-          coefficients['beta_2_power'],
-          coefficients['lr_t'],
-          coefficients['beta_1_t'],
-          coefficients['beta_2_t'],
-          coefficients['epsilon'],
-          grad,
-          use_locking=self._use_locking)
-    else:
-      vhat = self.get_slot(var, 'vhat')
-      var_update = training_ops.resource_apply_adam_with_amsgrad(
-          var.handle,
-          m.handle,
-          v.handle,
-          vhat.handle,
-          coefficients['beta_1_power'],
-          coefficients['beta_2_power'],
-          coefficients['lr_t'],
-          coefficients['beta_1_t'],
-          coefficients['beta_2_t'],
-          coefficients['epsilon'],
-          grad,
-          use_locking=self._use_locking)
+        if not self.amsgrad:
+            var_update = training_ops.resource_apply_adam(
+                var.handle,
+                m.handle,
+                v.handle,
+                coefficients['beta_1_power'],
+                coefficients['beta_2_power'],
+                coefficients['lr_t'],
+                coefficients['beta_1_t'],
+                coefficients['beta_2_t'],
+                coefficients['epsilon'],
+                grad,
+                use_locking=self._use_locking)
+        else:
+            vhat = self.get_slot(var, 'vhat')
+            var_update = training_ops.resource_apply_adam_with_amsgrad(
+                var.handle,
+                m.handle,
+                v.handle,
+                vhat.handle,
+                coefficients['beta_1_power'],
+                coefficients['beta_2_power'],
+                coefficients['lr_t'],
+                coefficients['beta_1_t'],
+                coefficients['beta_2_t'],
+                coefficients['epsilon'],
+                grad,
+                use_locking=self._use_locking)
 
-    project_var, was_projected = constraint.euclidean_project(var)
-    return state_ops.assign(var, project_var)
+        project_var, was_projected = constraint.euclidean_project(var)
+        return state_ops.assign(var, project_var)
 
-  def get_config(self):
-    config = super(Adam, self).get_config()
-    config.update({
-        'learning_rate': self._serialize_hyperparameter('learning_rate'),
-        'decay': self._serialize_hyperparameter('decay'),
-        'beta_1': self._serialize_hyperparameter('beta_1'),
-        'beta_2': self._serialize_hyperparameter('beta_2'),
-        'epsilon': self.epsilon,
-        'amsgrad': self.amsgrad,
-    })
-    return config
+    def get_config(self):
+        config = super(Adam, self).get_config()
+        config.update({
+            'learning_rate': self._serialize_hyperparameter('learning_rate'),
+            'decay': self._serialize_hyperparameter('decay'),
+            'beta_1': self._serialize_hyperparameter('beta_1'),
+            'beta_2': self._serialize_hyperparameter('beta_2'),
+            'epsilon': self.epsilon,
+            'amsgrad': self.amsgrad,
+        })
+        return config
 
 
 class Adadelta(ConstrainedOptimizer):
 
-  def __init__(self,
-               learning_rate=0.001,
-               rho=0.95,
-               epsilon=1e-7,
-               name='Adadelta',
-               **kwargs):
-    super(Adadelta, self).__init__(name, **kwargs)
-    self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
-    self._set_hyper('decay', self._initial_decay)
-    self._set_hyper('rho', rho)
-    self.epsilon = epsilon or backend_config.epsilon()
+    def __init__(self,
+                 learning_rate=0.001,
+                 rho=0.95,
+                 epsilon=1e-7,
+                 name='Adadelta',
+                 **kwargs):
+        super(Adadelta, self).__init__(name, **kwargs)
+        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+        self._set_hyper('decay', self._initial_decay)
+        self._set_hyper('rho', rho)
+        self.epsilon = epsilon or backend_config.epsilon()
 
-  def _create_slots(self, var_list):
-    # Separate for-loops to respect the ordering of slot variables from v1.
-    for v in var_list:
-      self.add_slot(v, 'accum_grad')
-    for v in var_list:
-      self.add_slot(v, 'accum_var')
+    def _create_slots(self, var_list):
+        # Separate for-loops to respect the ordering of slot variables from v1.
+        for v in var_list:
+            self.add_slot(v, 'accum_grad')
+        for v in var_list:
+            self.add_slot(v, 'accum_var')
 
-  def _prepare_local(self, var_device, var_dtype, apply_state):
-    super(Adadelta, self)._prepare_local(var_device, var_dtype, apply_state)
-    apply_state[(var_device, var_dtype)].update(
-        dict(
-            epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
-            rho=array_ops.identity(self._get_hyper('rho', var_dtype))))
+    def _prepare_local(self, var_device, var_dtype, apply_state):
+        super(Adadelta, self)._prepare_local(var_device, var_dtype, apply_state)
+        apply_state[(var_device, var_dtype)].update(
+            dict(
+                epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+                rho=array_ops.identity(self._get_hyper('rho', var_dtype))))
 
-  def set_weights(self, weights):
-    params = self.weights
-    # Override set_weights for backward compatibility of Keras V1 optimizer
-    # since it does not include iteration at head of the weight list. Set
-    # iteration to 0.
-    if len(params) == len(weights) + 1:
-      weights = [np.array(0)] + weights
-    super(Adadelta, self).set_weights(weights)
+    def set_weights(self, weights):
+        params = self.weights
+        # Override set_weights for backward compatibility of Keras V1 optimizer
+        # since it does not include iteration at head of the weight list. Set
+        # iteration to 0.
+        if len(params) == len(weights) + 1:
+            weights = [np.array(0)] + weights
+        super(Adadelta, self).set_weights(weights)
 
-  def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
-    var_device, var_dtype = var.device, var.dtype.base_dtype
-    coefficients = ((apply_state or {}).get((var_device, var_dtype))
-                    or self._fallback_apply_state(var_device, var_dtype))
+    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
+        var_device, var_dtype = var.device, var.dtype.base_dtype
+        coefficients = ((apply_state or {}).get((var_device, var_dtype))
+                        or self._fallback_apply_state(var_device, var_dtype))
 
-    accum_grad = self.get_slot(var, 'accum_grad')
-    accum_var = self.get_slot(var, 'accum_var')
-    var_update = training_ops.resource_apply_adadelta(
-        var.handle,
-        accum_grad.handle,
-        accum_var.handle,
-        coefficients['lr_t'],
-        coefficients['rho'],
-        coefficients['epsilon'],
-        grad,
-        use_locking=self._use_locking)
+        accum_grad = self.get_slot(var, 'accum_grad')
+        accum_var = self.get_slot(var, 'accum_var')
+        var_update = training_ops.resource_apply_adadelta(
+            var.handle,
+            accum_grad.handle,
+            accum_var.handle,
+            coefficients['lr_t'],
+            coefficients['rho'],
+            coefficients['epsilon'],
+            grad,
+            use_locking=self._use_locking)
 
-    project_var, was_projected = constraint.euclidean_project(var)
-    return state_ops.assign(var, project_var)
+        project_var, was_projected = constraint.euclidean_project(var)
+        return state_ops.assign(var, project_var)
 
-  def get_config(self):
-    config = super(Adadelta, self).get_config()
-    config.update({
-        'learning_rate': self._serialize_hyperparameter('learning_rate'),
-        'decay': self._serialize_hyperparameter('decay'),
-        'rho': self._serialize_hyperparameter('rho'),
-        'epsilon': self.epsilon,
-    })
-    return config
+    def get_config(self):
+        config = super(Adadelta, self).get_config()
+        config.update({
+            'learning_rate': self._serialize_hyperparameter('learning_rate'),
+            'decay': self._serialize_hyperparameter('decay'),
+            'rho': self._serialize_hyperparameter('rho'),
+            'epsilon': self.epsilon,
+        })
+        return config
 
 
 class Adagrad(ConstrainedOptimizer):
 
-  def __init__(self,
-               learning_rate=0.001,
-               initial_accumulator_value=0.1,
-               epsilon=1e-7,
-               name='Adagrad',
-               **kwargs):
-    if initial_accumulator_value < 0.0:
-      raise ValueError('initial_accumulator_value must be non-negative: %s' %
-                       initial_accumulator_value)
-    if epsilon is None:
-      epsilon = backend_config.epsilon()
-    super(Adagrad, self).__init__(name, **kwargs)
-    self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
-    self._set_hyper('decay', self._initial_decay)
-    self._initial_accumulator_value = initial_accumulator_value
-    self.epsilon = epsilon or backend_config.epsilon()
+    def __init__(self,
+                 learning_rate=0.001,
+                 initial_accumulator_value=0.1,
+                 epsilon=1e-7,
+                 name='Adagrad',
+                 **kwargs):
+        if initial_accumulator_value < 0.0:
+            raise ValueError('initial_accumulator_value must be non-negative: %s' %
+                             initial_accumulator_value)
+        if epsilon is None:
+            epsilon = backend_config.epsilon()
+        super(Adagrad, self).__init__(name, **kwargs)
+        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+        self._set_hyper('decay', self._initial_decay)
+        self._initial_accumulator_value = initial_accumulator_value
+        self.epsilon = epsilon or backend_config.epsilon()
 
-  def _create_slots(self, var_list):
-    for var in var_list:
-      dtype = var.dtype.base_dtype
-      init = init_ops.constant_initializer(
-          self._initial_accumulator_value, dtype=dtype)
-      self.add_slot(var, 'accumulator', init)
+    def _create_slots(self, var_list):
+        for var in var_list:
+            dtype = var.dtype.base_dtype
+            init = init_ops.constant_initializer(
+                self._initial_accumulator_value, dtype=dtype)
+            self.add_slot(var, 'accumulator', init)
 
-  def _prepare_local(self, var_device, var_dtype, apply_state):
-    super(Adagrad, self)._prepare_local(var_device, var_dtype, apply_state)
-    apply_state[(var_device, var_dtype)].update(
-        dict(
-            epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
-            neg_lr_t=-apply_state[(var_device, var_dtype)]['lr_t'],
-            zero=array_ops.zeros((), dtype=dtypes.int64)))
+    def _prepare_local(self, var_device, var_dtype, apply_state):
+        super(Adagrad, self)._prepare_local(var_device, var_dtype, apply_state)
+        apply_state[(var_device, var_dtype)].update(
+            dict(
+                epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+                neg_lr_t=-apply_state[(var_device, var_dtype)]['lr_t'],
+                zero=array_ops.zeros((), dtype=dtypes.int64)))
 
-  def set_weights(self, weights):
-    params = self.weights
-    # Override set_weights for backward compatibility of Keras V1 optimizer
-    # since it does not include iteration at head of the weight list. Set
-    # iteration to 0.
-    if len(params) == len(weights) + 1:
-      weights = [np.array(0)] + weights
-    super(Adagrad, self).set_weights(weights)
+    def set_weights(self, weights):
+        params = self.weights
+        # Override set_weights for backward compatibility of Keras V1 optimizer
+        # since it does not include iteration at head of the weight list. Set
+        # iteration to 0.
+        if len(params) == len(weights) + 1:
+            weights = [np.array(0)] + weights
+        super(Adagrad, self).set_weights(weights)
 
-  @classmethod
-  def from_config(cls, config, custom_objects=None):
-    if 'initial_accumulator_value' not in config:
-      config['initial_accumulator_value'] = 0.1
-    if 'lr' in config:
-      config['learning_rate'] = config.pop('lr')
-    return cls(**config)
+    @classmethod
+    def from_config(cls, config, custom_objects=None):
+        if 'initial_accumulator_value' not in config:
+            config['initial_accumulator_value'] = 0.1
+        if 'lr' in config:
+            config['learning_rate'] = config.pop('lr')
+        return cls(**config)
 
-  def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
-    var_device, var_dtype = var.device, var.dtype.base_dtype
-    coefficients = ((apply_state or {}).get((var_device, var_dtype))
-                    or self._fallback_apply_state(var_device, var_dtype))
+    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
+        var_device, var_dtype = var.device, var.dtype.base_dtype
+        coefficients = ((apply_state or {}).get((var_device, var_dtype))
+                        or self._fallback_apply_state(var_device, var_dtype))
 
-    acc = self.get_slot(var, 'accumulator')
-    var_update = training_ops.resource_apply_adagrad_v2(
-        var.handle,
-        acc.handle,
-        coefficients['lr_t'],
-        coefficients['epsilon'],
-        grad,
-        use_locking=self._use_locking)
+        acc = self.get_slot(var, 'accumulator')
+        var_update = training_ops.resource_apply_adagrad_v2(
+            var.handle,
+            acc.handle,
+            coefficients['lr_t'],
+            coefficients['epsilon'],
+            grad,
+            use_locking=self._use_locking)
 
-    project_var, was_projected = constraint.euclidean_project(var)
-    return state_ops.assign(var, project_var)
+        project_var, was_projected = constraint.euclidean_project(var)
+        return state_ops.assign(var, project_var)
 
-  def get_config(self):
-    config = super(Adagrad, self).get_config()
-    config.update({
-        'learning_rate': self._serialize_hyperparameter('learning_rate'),
-        'decay': self._serialize_hyperparameter('decay'),
-        'initial_accumulator_value': self._initial_accumulator_value,
-        'epsilon': self.epsilon,
-    })
-    return config
+    def get_config(self):
+        config = super(Adagrad, self).get_config()
+        config.update({
+            'learning_rate': self._serialize_hyperparameter('learning_rate'),
+            'decay': self._serialize_hyperparameter('decay'),
+            'initial_accumulator_value': self._initial_accumulator_value,
+            'epsilon': self.epsilon,
+        })
+        return config

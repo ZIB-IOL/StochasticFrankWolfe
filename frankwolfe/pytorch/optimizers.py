@@ -1,6 +1,6 @@
 # ===========================================================================
 # Project:      StochasticFrankWolfe 2020 / IOL Lab @ ZIB
-# File:         optimizer.py
+# File:         pytorch/optimizers.py
 # Description:  Pytorch implementation of Stochastic Frank Wolfe, AdaGradSFW and SGD with projection
 # ===========================================================================
 import torch
@@ -11,7 +11,6 @@ class SFW(torch.optim.Optimizer):
     Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        lmo (function): LMO instance (access it with lmo.lmo)
         learning_rate (float): learning rate between 0.0 and 1.0
         rescale (string or None): Type of learning_rate rescaling. Must be 'diameter', 'gradient' or None
         momentum (float): momentum factor, 0 for no momentum
@@ -35,6 +34,8 @@ class SFW(torch.optim.Optimizer):
     def step(self, constraints, closure=None):
         """Performs a single optimization step.
         Args:
+            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
+            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -84,13 +85,11 @@ class AdaGradSFW(torch.optim.Optimizer):
     Arguments:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        lmo (function): LMO oracle instance (access it with lmo.lmo)
         inner_steps (integer, optional): number of inner iterations (default: 2)
-        lr (float, optional): learning rate (default: 1e-2)
+        learning_rate (float, optional): learning rate (default: 1e-2)
         delta (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-10)
         momentum (float, optional): momentum factor
-        initial_accumulator_value (float, optional): value that the initial accumulator vector is filled with (H_t)
     """
 
     def __init__(self, params, inner_steps=2, learning_rate=1e-2, delta=1e-8, momentum=0.9):
@@ -116,7 +115,9 @@ class AdaGradSFW(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self, constraints, closure=None):
         """Performs a single optimization step.
-        Arguments:
+        Args:
+            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
+            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -160,7 +161,7 @@ class AdaGradSFW(torch.optim.Optimizer):
 
 
 class SGD(torch.optim.Optimizer):
-    """Modified SGD which allows projection via LMO"""
+    """Modified SGD which allows projection via Constraint class"""
 
     def __init__(self, params, lr=0.1, momentum=0, dampening=0,
                  weight_decay=0, nesterov=False):
@@ -189,8 +190,9 @@ class SGD(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self, constraints, closure=None):
         """Performs a single optimization step.
-
-        Arguments:
+        Args:
+            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
+            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """

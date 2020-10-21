@@ -1,6 +1,6 @@
 # ===========================================================================
-# Project:      FrankWolfe 2020
-# File:         constraints.py
+# Project:      StochasticFrankWolfe 2020 / IOL Lab @ ZIB
+# File:         pytorch/constraints.py
 # Description:  Contains LMO-oracle classes for Pytorch
 # ===========================================================================
 import torch
@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import math
 
 tolerance = 1e-10
+
 
 #### HELPER FUNCTIONS ####
 @torch.no_grad()
@@ -19,6 +20,7 @@ def get_avg_init_norm(layer, param_type=None, ord=2, repetitions=100):
         output += torch.norm(getattr(layer, param_type), p=ord).item()
     return float(output) / repetitions
 
+
 def convert_lp_radius(r, N, in_ord=2, out_ord='inf'):
     """
     Convert between radius of Lp balls such that the ball of order out_order
@@ -27,18 +29,24 @@ def convert_lp_radius(r, N, in_ord=2, out_ord='inf'):
     """
     # Convert 'inf' to float('inf') if necessary
     in_ord, out_ord = float(in_ord), float(out_ord)
-    in_ord_rec = 0.5 if in_ord == 1 else 1.0/in_ord
-    out_ord_rec = 0.5 if out_ord == 1 else 1.0/out_ord
+    in_ord_rec = 0.5 if in_ord == 1 else 1.0 / in_ord
+    out_ord_rec = 0.5 if out_ord == 1 else 1.0 / out_ord
 
-    return r * N**(out_ord_rec - in_ord_rec)
+    return r * N ** (out_ord_rec - in_ord_rec)
+
 
 def get_lp_complementary_order(ord):
     """Get the complementary order"""
     ord = float(ord)
-    if ord == float('inf'): return 1
-    elif ord == 1: return float('inf')
-    elif ord >= 2: return 1.0/(1.0 - 1.0/ord)
-    else: raise NotImplementedError(f"Order {ord} not supported.")
+    if ord == float('inf'):
+        return 1
+    elif ord == 1:
+        return float('inf')
+    elif ord >= 2:
+        return 1.0 / (1.0 - 1.0 / ord)
+    else:
+        raise NotImplementedError(f"Order {ord} not supported.")
+
 
 def print_constraints(model, constraints):
     for idx, (name, param) in enumerate(model.named_parameters()):
@@ -47,27 +55,40 @@ def print_constraints(model, constraints):
         print(f"  shape is {param.shape}")
         print(f"  size is {constraint.n}")
         print(f"  constraint type is {type(constraint)}")
-        try: print(f"  radius is {constraint.get_radius()}")
-        except: pass
+        try:
+            print(f"  radius is {constraint.get_radius()}")
+        except:
+            pass
         print(f"  diameter is {constraint.get_diameter()}")
-        try: print(f"  order is {constraint.p}")
-        except: pass
-        try: print(f"  K is {constraint.K}")
-        except: pass
+        try:
+            print(f"  order is {constraint.p}")
+        except:
+            pass
+        try:
+            print(f"  K is {constraint.K}")
+        except:
+            pass
         print("\n")
+
 
 @torch.no_grad()
 def make_feasible(model, constraints):
+    """Shift all model parameters inside the feasible region defined by constraints"""
     for idx, (name, param) in enumerate(model.named_parameters()):
         constraint = constraints[idx]
         param.copy_(constraint.shift_inside(param))
 
+
 @torch.no_grad()
 def create_unconstraints(model):
+    """Create free constraints for each layer"""
     return [Unconstrained(param.numel()) for name, param in model.named_parameters()]
+
 
 @torch.no_grad()
 def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
+    """Create L_p constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
+    factor to multiply average initialization norm with)"""
     constraints = []
 
     # Compute average init norms if necessary
@@ -76,7 +97,8 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
-                                                                             type(getattr(layer, entry)) != type(None))]:
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
                     param = getattr(layer, param_type)
                     shape = param.shape
 
@@ -88,7 +110,6 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
 
     for name, param in model.named_parameters():
         n = param.numel()
-
         if mode == 'radius':
             constraint = LpBall(n, ord=ord, diameter=None, radius=value)
         elif mode == 'diameter':
@@ -101,7 +122,10 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
         constraints.append(constraint)
     return constraints
 
+
 def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
+    """Create KSparsePolytope constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
+    factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
     constraints = []
 
     # Compute average init norms if necessary
@@ -110,7 +134,8 @@ def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initia
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
-                                                                             type(getattr(layer, entry)) != type(None))]:
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
                     param = getattr(layer, param_type)
                     shape = param.shape
 
@@ -126,17 +151,17 @@ def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initia
         if K_frac is None and K is None:
             raise ValueError("Both K and K_frac are None")
         elif K_frac is None:
-            real_K = min(int(K),n)
+            real_K = min(int(K), n)
         elif K is None:
-            real_K = min(int(K_frac*n),n)
+            real_K = min(int(K_frac * n), n)
         else:
-            real_K = min(max(int(K),int(K_frac*n)),n)
+            real_K = min(max(int(K), int(K_frac * n)), n)
 
-        if mode=='radius':
+        if mode == 'radius':
             constraint = KSparsePolytope(n, K=real_K, diameter=None, radius=value)
-        elif mode=='diameter':
+        elif mode == 'diameter':
             constraint = KSparsePolytope(n, K=real_K, diameter=value, radius=None)
-        elif mode=='initialization':
+        elif mode == 'initialization':
             diameter = 2.0 * value * init_norms[param.shape]
             constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
         else:
@@ -144,12 +169,14 @@ def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initia
         constraints.append(constraint)
     return constraints
 
+
 #### LMO BASE CLASSES ####
 class Constraint:
     """
     Parent/Base class for constraints
     :param n: dimension of constraint parameter space
     """
+
     def __init__(self, n):
         self.n = n
         self._diameter, self._radius = None, None
@@ -161,8 +188,10 @@ class Constraint:
         return self._diameter
 
     def get_radius(self):
-        try: return self._radius
-        except: raise ValueError("Tried to get radius from a constraint without one")
+        try:
+            return self._radius
+        except:
+            raise ValueError("Tried to get radius from a constraint without one")
 
     def lmo(self, x):
         assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
@@ -173,11 +202,13 @@ class Constraint:
     def euclidean_project(self, x):
         assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
+
 class Unconstrained(Constraint):
     """
     Parent/Base class for unconstrained parameter spaces
     :param n: dimension of unconstrained parameter space
     """
+
     def __init__(self, n):
         super().__init__(n)
         self._diameter = float('inf')
@@ -197,11 +228,13 @@ class Unconstrained(Constraint):
         super().__init__(x)
         return x
 
+
 #### LMO CLASSES ####
 class LpBall(Constraint):
     """
     LMO class for the n-dim Lp-Ball (p=ord) with L2-diameter diameter or radius.
     """
+
     def __init__(self, n, ord=2, diameter=None, radius=None):
         super().__init__(n)
         self.p = float(ord)
@@ -212,9 +245,9 @@ class LpBall(Constraint):
             raise ValueError("Neither diameter nor radius given.")
         elif diameter is None:
             self._radius = radius
-            self._diameter = 2*convert_lp_radius(radius, self.n, in_ord=self.p, out_ord=2)
+            self._diameter = 2 * convert_lp_radius(radius, self.n, in_ord=self.p, out_ord=2)
         elif radius is None:
-            self._radius = convert_lp_radius(diameter/2.0, self.n, in_ord=2, out_ord=self.p)
+            self._radius = convert_lp_radius(diameter / 2.0, self.n, in_ord=2, out_ord=self.p)
             self._diameter = diameter
         else:
             raise ValueError("Both diameter and radius given")
@@ -262,7 +295,8 @@ class LpBall(Constraint):
             x_norm = torch.norm(x, p=1)
             if x_norm > self._radius:
                 sorted = torch.sort(torch.abs(x.flatten()), descending=True).values
-                running_mean = (torch.cumsum(sorted, 0) - self._radius) / torch.arange(1, sorted.numel() + 1, device=x.device)
+                running_mean = (torch.cumsum(sorted, 0) - self._radius) / torch.arange(1, sorted.numel() + 1,
+                                                                                       device=x.device)
                 is_less_or_equal = sorted <= running_mean
                 # This works b/c if one element is True, so are all later elements
                 idx = is_less_or_equal.numel() - is_less_or_equal.sum() - 1
@@ -277,11 +311,13 @@ class LpBall(Constraint):
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
 
+
 class KSparsePolytope(Constraint):
     """
     # Polytopes with vertices v \in {0, +/- r}^n such that exactly k entries are nonzero
     # This is exactly the intersection of B_1(r*k) with B_inf(r)
     """
+
     def __init__(self, n, K=1, diameter=None, radius=None):
         super().__init__(n)
 
