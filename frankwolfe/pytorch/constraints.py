@@ -80,17 +80,16 @@ def make_feasible(model):
 
 
 @torch.no_grad()
-def create_unconstraints(model):
+def set_unconstrained(model):
     """Create free constraints for each layer"""
-    return [Unconstrained(param.numel()) for name, param in model.named_parameters()]
+    for name, param in model.named_parameters():
+        param.constraint = Unconstrained(param.numel())
 
 
 @torch.no_grad()
 def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
     """Create L_p constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with)"""
-    constraints = []
-
     # Compute average init norms if necessary
     init_norms = dict()
     if mode == 'initialization':
@@ -119,17 +118,12 @@ def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
             constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
         else:
             raise ValueError(f"Unknown mode {mode}")
-
-        constraints.append(constraint)
         param.constraint = constraint
-    return constraints
 
 
-def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
+def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
     """Create KSparsePolytope constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
-    constraints = []
-
     # Compute average init norms if necessary
     init_norms = dict()
     if mode == 'initialization':
@@ -168,8 +162,7 @@ def create_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initia
             constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
         else:
             raise ValueError(f"Unknown mode {mode}")
-        constraints.append(constraint)
-    return constraints
+        param.constraint = constraint
 
 
 #### LMO BASE CLASSES ####
