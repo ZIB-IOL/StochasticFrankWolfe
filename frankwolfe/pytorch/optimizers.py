@@ -64,7 +64,7 @@ class SFW(torch.optim.Optimizer):
 
                 if self.rescale == 'diameter':
                     # Rescale lr by diameter
-                    factor = 1. / constraints[idx].get_diameter(v.shape)
+                    factor = 1. / constraints[idx].get_diameter()
                 elif self.rescale == 'gradient':
                     # Rescale lr by gradient
                     factor = torch.norm(d_p, p=2) / torch.norm(p - v, p=2)
