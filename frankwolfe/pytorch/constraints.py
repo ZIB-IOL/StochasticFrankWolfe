@@ -72,10 +72,10 @@ def print_constraints(model, constraints):
 
 
 @torch.no_grad()
-def make_feasible(model, constraints):
+def make_feasible(model):
     """Shift all model parameters inside the feasible region defined by constraints"""
     for idx, (name, param) in enumerate(model.named_parameters()):
-        constraint = constraints[idx]
+        constraint = param.constraint
         param.copy_(constraint.shift_inside(param))
 
 
@@ -86,7 +86,7 @@ def create_unconstraints(model):
 
 
 @torch.no_grad()
-def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
+def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
     """Create L_p constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with)"""
     constraints = []
@@ -119,7 +119,9 @@ def create_lp_constraints(model, ord=2, value=300, mode='initialization'):
             constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
         else:
             raise ValueError(f"Unknown mode {mode}")
+
         constraints.append(constraint)
+        param.constraint = constraint
     return constraints
 
 

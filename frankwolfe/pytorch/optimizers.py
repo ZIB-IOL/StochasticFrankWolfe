@@ -31,7 +31,7 @@ class SFW(torch.optim.Optimizer):
         super(SFW, self).__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, constraints, closure=None):
+    def step(self, closure=None):
         """Performs a single optimization step.
         Args:
             constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
@@ -43,7 +43,7 @@ class SFW(torch.optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-        idx = 0
+
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is None:
@@ -59,12 +59,12 @@ class SFW(torch.optim.Optimizer):
                     else:
                         param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1 - momentum)
                         d_p = param_state['momentum_buffer']
-
-                v = constraints[idx].lmo(d_p)  # LMO optimal solution
+                constraint = p.constraint
+                v = constraint.lmo(d_p)  # LMO optimal solution
 
                 if self.rescale == 'diameter':
                     # Rescale lr by diameter
-                    factor = 1. / constraints[idx].get_diameter(v.shape)
+                    factor = 1. / constraint.get_diameter()
                 elif self.rescale == 'gradient':
                     # Rescale lr by gradient
                     factor = torch.norm(d_p, p=2) / torch.norm(p - v, p=2)
@@ -76,7 +76,7 @@ class SFW(torch.optim.Optimizer):
 
                 p.mul_(1 - lr)
                 p.add_(v, alpha=lr)
-                idx += 1
+
         return loss
 
 
