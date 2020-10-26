@@ -34,8 +34,6 @@ class SFW(torch.optim.Optimizer):
     def step(self, closure=None):
         """Performs a single optimization step.
         Args:
-            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
-            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -113,11 +111,9 @@ class AdaGradSFW(torch.optim.Optimizer):
                 param_state['sum'] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
     @torch.no_grad()
-    def step(self, constraints, closure=None):
+    def step(self, closure=None):
         """Performs a single optimization step.
         Args:
-            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
-            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -126,7 +122,6 @@ class AdaGradSFW(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
-        idx = 0
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is None:
@@ -149,14 +144,13 @@ class AdaGradSFW(torch.optim.Optimizer):
                 y = p.detach().clone()
                 for _ in range(self.K):
                     d_Q = d_p.addcmul(H, y - p, value=1. / group['lr'])
-                    y_v_diff = y - constraints[idx].lmo(d_Q)
+                    y_v_diff = y - p.constraint.lmo(d_Q)
                     gamma = group['lr'] * torch.div(torch.sum(torch.mul(d_Q, y_v_diff)),
                                                     torch.sum(H.mul(torch.mul(y_v_diff, y_v_diff))))
                     gamma = max(0.0, min(gamma, 1.0))  # Clamp between [0, 1]
 
                     y.add_(y_v_diff, alpha=-gamma)  # -gamma needed as we want to add v-y, not y-v
                 p.copy_(y)
-                idx += 1
         return loss
 
 
@@ -188,11 +182,9 @@ class SGD(torch.optim.Optimizer):
             group.setdefault('nesterov', False)
 
     @torch.no_grad()
-    def step(self, constraints, closure=None):
+    def step(self, closure=None):
         """Performs a single optimization step.
         Args:
-            constraints (iterable): list of constraints, where each is an initialization of Constraint subclasses
-            parameter groups
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -200,7 +192,7 @@ class SGD(torch.optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-        idx = 0
+
         for group in self.param_groups:
             weight_decay = group['weight_decay']
             momentum = group['momentum']
@@ -228,8 +220,8 @@ class SGD(torch.optim.Optimizer):
                 p.add_(d_p, alpha=-group['lr'])
 
                 # Project if necessary
-                if not constraints[idx].is_unconstrained():
-                    p.copy_(constraints[idx].euclidean_project(p))
-                idx += 1
+                if hasattr(p, 'constraint'):
+                    if not p.constraint.is_unconstrained():
+                        p.copy_(p.constraint.euclidean_project(p))
 
         return loss
