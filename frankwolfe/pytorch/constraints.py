@@ -48,9 +48,13 @@ def get_lp_complementary_order(ord):
         raise NotImplementedError(f"Order {ord} not supported.")
 
 
-def print_constraints(model, constraints):
+def print_constraints(model):
     for idx, (name, param) in enumerate(model.named_parameters()):
-        constraint = constraints[idx]
+        if hasattr(param, 'constraint'):
+            constraint = param.constraint
+        else:
+            print(f"No constraint found for variable {name}.")
+            continue
         print(f"variable {name}")
         print(f"  shape is {param.shape}")
         print(f"  size is {constraint.n}")
@@ -72,11 +76,20 @@ def print_constraints(model, constraints):
 
 
 @torch.no_grad()
-def make_feasible(model):
+def make_feasible(model, single_constraint=None):
     """Shift all model parameters inside the feasible region defined by constraints"""
-    for idx, (name, param) in enumerate(model.named_parameters()):
-        constraint = param.constraint
-        param.copy_(constraint.shift_inside(param))
+    if not single_constraint:
+        for idx, (name, param) in enumerate(model.named_parameters()):
+            constraint = param.constraint
+            param.copy_(constraint.shift_inside(param))
+    else:
+        param_list = [p for name, p in model.named_parameters()]
+        shifted_vector = single_constraint.shift_inside(torch.cat([p.view(-1) for p in param_list]))
+        for p in param_list:
+            numberOfElements = p.numel()
+            p.copy_(shifted_vector[:numberOfElements].view(p.shape))
+            shifted_vector = shifted_vector[numberOfElements:]
+
 
 
 @torch.no_grad()
@@ -85,6 +98,79 @@ def set_unconstrained(model):
     for name, param in model.named_parameters():
         param.constraint = Unconstrained(param.numel())
 
+@torch.no_grad()
+def set_single_lp_constraint(model, ord=2, value=300, mode='initialization'):
+    """Create 1 L_p constraint for entire model, where p == ord, and value depends on mode (is radius, diameter, or
+    factor to multiply average initialization norm with)"""
+    # Compute average init norms if necessary
+    cum_avg_norm = 0.0
+    n = 0
+    if mode == 'initialization':
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
+                    param = getattr(layer, param_type)
+                    n += int(param.numel())
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    cum_avg_norm += avg_norm
+    if mode == 'radius':
+        constraint = LpBall(n, ord=ord, diameter=None, radius=value)
+    elif mode == 'diameter':
+        constraint = LpBall(n, ord=ord, diameter=value, radius=None)
+    elif mode == 'initialization':
+        diameter = 2.0 * value * cum_avg_norm
+        constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+    for name, param in model.named_parameters():
+        # Set the same constraint for every parameter, the rest is handled within the optimizer
+        param.constraint = constraint
+    return constraint
+
+@torch.no_grad()
+def set_single_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
+    """Create KSparsePolytope constraints for entire model, and value depends on mode (is radius, diameter, or
+        factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
+    # Compute average init norms if necessary
+    cum_avg_norm = 0.0
+    n = 0
+    if mode == 'initialization':
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and
+                                                                             type(getattr(layer, entry)) != type(
+                            None))]:
+                    param = getattr(layer, param_type)
+                    n += int(param.numel())
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    cum_avg_norm += avg_norm
+
+    if K_frac is None and K is None:
+        raise ValueError("Both K and K_frac are None")
+    elif K_frac is not None and K is not None:
+        raise ValueError("Both K and K_frac given.")
+    elif K_frac is None:
+        real_K = min(int(K), n)
+    elif K is None:
+        real_K = min(int(K_frac * n), n)
+    else:
+        real_K = min(max(int(K), int(K_frac * n)), n)
+
+    if mode == 'radius':
+        constraint = KSparsePolytope(n, K=real_K, diameter=None, radius=value)
+    elif mode == 'diameter':
+        constraint = KSparsePolytope(n, K=real_K, diameter=value, radius=None)
+    elif mode == 'initialization':
+        diameter = 2.0 * value * cum_avg_norm
+        constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+    for name, param in model.named_parameters():
+        # Set the same constraint for every parameter, the rest is handled within the optimizer
+        param.constraint = constraint
+    return constraint
 
 @torch.no_grad()
 def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
@@ -119,10 +205,11 @@ def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
         else:
             raise ValueError(f"Unknown mode {mode}")
         param.constraint = constraint
+    return None
 
 
 def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
-    """Create KSparsePolytope constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
+    """Create KSparsePolytope constraints for each layer, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
     # Compute average init norms if necessary
     init_norms = dict()
@@ -146,6 +233,8 @@ def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initializ
 
         if K_frac is None and K is None:
             raise ValueError("Both K and K_frac are None")
+        elif K_frac is not None and K is not None:
+            raise ValueError("Both K and K_frac given.")
         elif K_frac is None:
             real_K = min(int(K), n)
         elif K is None:
@@ -163,6 +252,7 @@ def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initializ
         else:
             raise ValueError(f"Unknown mode {mode}")
         param.constraint = constraint
+    return None
 
 
 #### LMO BASE CLASSES ####
