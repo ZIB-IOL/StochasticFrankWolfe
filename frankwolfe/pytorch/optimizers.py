@@ -237,8 +237,7 @@ class SGD(torch.optim.Optimizer):
                 # Project if necessary
                 if not self.global_constraint:  # We have to project afterwards
                     if hasattr(p, 'constraint'):
-                        if not p.constraint.is_unconstrained():
-                            p.copy_(p.constraint.euclidean_project(p))
+                        p.copy_(p.constraint.euclidean_project(p))
 
         if self.global_constraint:
             # Project entire gradient vector
