@@ -5,6 +5,8 @@
 # ===========================================================================
 import torch
 
+# TODO: How do we handle unconstrained parameters?
+# TODO: Is modifying a large tensor through indexing when dealing with global constraints a good idea?
 
 class SFW(torch.optim.Optimizer):
     """Stochastic Frank Wolfe Algorithm
@@ -16,23 +18,25 @@ class SFW(torch.optim.Optimizer):
         momentum (float): momentum factor, 0 for no momentum
     """
 
-    def __init__(self, params, learning_rate=0.1, rescale='diameter', momentum=0.9, single_constraint=None):
+    def __init__(self, params, learning_rate=0.1, rescale='diameter', momentum=0, dampening=0, global_constraint=None):
+        momentum = momentum or 0
+        dampening = dampening or 0
         if not (0.0 <= learning_rate <= 1.0):
             raise ValueError("Invalid learning rate: {}".format(learning_rate))
         if not (0.0 <= momentum <= 1.0):
-            raise ValueError("Momentum must be between [0, 1].")
+            raise ValueError("Momentum must be between 0 and 1.")
+        if not (0.0 <= dampening <= 1.0):
+            raise ValueError("Dampening must be between 0 and 1.")
         if rescale == 'None': rescale = None
         if not (rescale in ['diameter', 'gradient', None]):
             raise ValueError("Rescale type must be either 'diameter', 'gradient' or None.")
 
-        # Parameters
         self.rescale = rescale
-        self.single_constraint = single_constraint  # If not None, this points to the constraint instance
+        self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
+        assert not (self.global_constraint and len(self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
-        defaults = dict(lr=learning_rate, momentum=momentum)
+        defaults = dict(lr=learning_rate, momentum=momentum, dampening=dampening)
         super(SFW, self).__init__(params, defaults)
-        assert not (self.single_constraint and len(
-            self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -46,10 +50,10 @@ class SFW(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
-        if not self.single_constraint:
+        if not self.global_constraint:
             # Do the iterative default step
             self.iterative_step()
-        elif self.single_constraint:
+        elif self.global_constraint:
             self.non_iterative_step()
         return loss
 
@@ -62,29 +66,31 @@ class SFW(torch.optim.Optimizer):
                 d_p = p.grad
                 # Add momentum
                 momentum = group['momentum']
+                dampening = group['dampening']
                 if momentum > 0:
                     param_state = self.state[p]
                     if 'momentum_buffer' not in param_state:
                         param_state['momentum_buffer'] = d_p.detach().clone()
                     else:
-                        param_state['momentum_buffer'].mul_(momentum).add_(d_p)
+                        param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1-dampening)
                     d_p = param_state['momentum_buffer']
-
-                constraint = p.constraint
-                v = constraint.lmo(d_p)  # LMO optimal solution
-
+                
+                # LMO solution
+                v = p.constraint.lmo(d_p)  # LMO optimal solution
+                
+                # Determine learning rate rescaling factor
                 if self.rescale == 'diameter':
                     # Rescale lr by diameter
-                    factor = 1. / constraint.get_diameter()
+                    factor = 1. / p.constraint.get_diameter()
                 elif self.rescale == 'gradient':
                     # Rescale lr by gradient
                     factor = torch.norm(d_p, p=2) / torch.norm(p - v, p=2)
                 else:
                     # No rescaling
                     factor = 1
-
                 lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
 
+                # Update parameters
                 p.mul_(1 - lr)
                 p.add_(v, alpha=lr)
 
@@ -92,15 +98,14 @@ class SFW(torch.optim.Optimizer):
     def non_iterative_step(self):
         group = self.param_groups[0]
         momentum = group['momentum']
+        dampening = group['dampening']
+        
+        # Concatenate parameters inton a single vector
         param_list = [p for p in group['params'] if p.grad is not None]
+        param_vec = torch.cat([p.view(-1) for p in param_list])
 
-        # Get the vector
-        #grad_vector = torch.cat([p.grad.view(-1) for p in param_list])
-        #grad_vector_shape = grad_vector.shape
-
+        # Add momentum, fill grad list with momentum_buffers and concatenate
         grad_list = []
-
-        # Add momentum and fill grad list with momentum_buffers
         for p in param_list:
             d_p = p.grad
             if momentum > 0:
@@ -108,21 +113,27 @@ class SFW(torch.optim.Optimizer):
                 if 'momentum_buffer' not in param_state:
                     param_state['momentum_buffer'] = d_p.detach().clone()
                 else:
-                    param_state['momentum_buffer'].mul_(momentum).add_(d_p)
+                    param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1-dampening)
                 d_p = param_state['momentum_buffer']
             grad_list.append(d_p)
-        v = self.single_constraint.lmo(torch.cat([p.grad.view(-1) for p in param_list]))
+        grad_vec = torch.cat([g.view(-1) for g in grad_list])
+        
+        # LMO solution
+        v = self.global_constraint.lmo(grad_vec)
+        
+        # Determine learning rate rescaling factor
         if self.rescale == 'diameter':
             # Rescale lr by diameter
-            factor = 1. / self.single_constraint.get_diameter()
+            factor = 1. / self.global_constraint.get_diameter()
         elif self.rescale == 'gradient':
             # Rescale lr by gradient
-            factor = torch.norm(torch.cat([p.grad.view(-1) for p in param_list]), p=2) \
-                     / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
+            factor = torch.norm(grad_vec, p=2) / torch.norm(param_vec - v, p=2)
         else:
             # No rescaling
-            factor = 1
+            factor = 1 
         lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
+        
+        # Update parameters
         for p in param_list:
             numberOfElements = p.numel()
             p.mul_(1 - lr)
@@ -133,28 +144,29 @@ class SFW(torch.optim.Optimizer):
 class SGD(torch.optim.Optimizer):
     """Modified SGD which allows projection via Constraint class"""
 
-    def __init__(self, params, lr=0.1, momentum=0, dampening=0,
-                 weight_decay=0, weight_decay_ord=2, nesterov=False, single_constraint=None):
-        if momentum is None:
-            momentum = 0
-        if weight_decay is None:
-            weight_decay = 0
-        if weight_decay_ord not in [1, 2]:
-            raise ValueError(f"Invalid weight_decay order: {weight_decay_ord}, must be 1 or 2.")
+    def __init__(self, params, lr=0.1, momentum=0, dampening=0, nesterov=False,
+                 weight_decay=0, weight_decay_ord=2, global_constraint=None):
+        momentum = momentum or 0
+        dampening = dampening or 0
+        weight_decay = weight_decay or 0
+        if not weight_decay_ord >= 1:
+            raise ValueError(f"Invalid weight_decay order: {weight_decay_ord}.")
         if lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not (0.0 <= momentum <= 1.0):
-            raise ValueError("Momentum must be between [0, 1].")
+            raise ValueError("Momentum must be between 0 and 1.")
+        if not (0.0 <= dampening <= 1.0):
+            raise ValueError("Dampening must be between 0 and 1.")
         if weight_decay < 0.0:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+        if nesterov and (momentum == 0 or dampening != 0):
+            raise ValueError("Nesterov momentum requires momentum and zero dampening")
+        
+        self.global_constraint = global_constraint  # If not None, this points to the constraint instance
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
                         weight_decay=weight_decay, weight_decay_ord=weight_decay_ord, nesterov=nesterov)
-        if nesterov and (momentum <= 0 or dampening != 0):
-            raise ValueError("Nesterov momentum requires a momentum and zero dampening")
         super(SGD, self).__init__(params, defaults)
-        # ToDo: this should probably be renamed to global_constraint
-        self.single_constraint = single_constraint  # If not None, this points to the constraint instance
 
     def __setstate__(self, state):
         super(SGD, self).__setstate__(state)
@@ -185,20 +197,26 @@ class SGD(torch.optim.Optimizer):
                     continue
                 d_p = p.grad
 
-                if weight_decay != 0:
-                    if weight_decay_ord == 2:
-                        # L2 regularization
-                        d_p = d_p.add(p, alpha=weight_decay)
-                    elif weight_decay_ord == 1:
+                if weight_decay > 0:
+                    if weight_decay_ord == 1:
                         # L1 regularization
                         d_p = d_p.add(torch.sign(p), alpha=weight_decay)
-                if momentum != 0:
+                    elif weight_decay_ord == 2:
+                        # L2 regularization
+                        d_p = d_p.add(p, alpha=weight_decay)
+                    elif weight_decay_ord == float('inf'):
+                        # Linf regularization
+                        d_p = d_p.add(torch.sign(p)*(torch.abs(p)==torch.max(torch.abs(p))), alpha=weight_decay)
+                    else:
+                        # Arbitrary Lp regularization when p ist not 1, 2 or inf
+                        d_p = d_p.add(torch.sign(p) * torch.abs(p).pow(weight_decay_ord-1), alpha=weight_decay)
+                if momentum > 0:
                     param_state = self.state[p]
                     if 'momentum_buffer' not in param_state:
                         buf = param_state['momentum_buffer'] = torch.clone(d_p).detach()
                     else:
                         buf = param_state['momentum_buffer']
-                        buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
+                        buf.mul_(momentum).add_(d_p, alpha=1-dampening)
                     if nesterov:
                         d_p = d_p.add(buf, alpha=momentum)
                     else:
@@ -207,16 +225,16 @@ class SGD(torch.optim.Optimizer):
                 p.add_(d_p, alpha=-group['lr'])
 
                 # Project if necessary
-                if not self.single_constraint:  # We have to project afterwards
+                if not self.global_constraint:  # We have to project afterwards
                     if hasattr(p, 'constraint'):
                         if not p.constraint.is_unconstrained():
                             p.copy_(p.constraint.euclidean_project(p))
 
-        if self.single_constraint:
+        if self.global_constraint:
             # Project entire gradient vector
             assert len(self.param_groups) == 1, "This does not work for multiple param_groups yet."
             param_list = [p for p in self.param_groups[0]['params'] if p.grad is not None]
-            p_proj = self.single_constraint.euclidean_project(torch.cat([p.view(-1) for p in param_list]))
+            p_proj = self.global_constraint.euclidean_project(torch.cat([p.view(-1) for p in param_list]))
             for p in param_list:
                 numberOfElements = p.numel()
                 p.copy_(p_proj[:numberOfElements].view(p.shape))
