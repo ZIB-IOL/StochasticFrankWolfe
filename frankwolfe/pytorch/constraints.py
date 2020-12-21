@@ -10,7 +10,7 @@ import math
 tolerance = 1e-10
 
 
-# Auxilliary methods
+# Auxiliary methods
 @torch.no_grad()
 def get_avg_init_norm(layer, param_type=None, ord=2, repetitions=100):
     """Computes the average norm of default layer initialization"""
@@ -83,6 +83,12 @@ def make_feasible(model, global_constraint=None):
 def get_global_lp_constraint(model, ord=2, value=300, mode='initialization'):
     """Create 1 L_p constraint for entire model, where p == ord, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with)"""
+    n = 0
+    for layer in model.modules():
+        for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and type(getattr(layer, entry)) != type( None))]:
+            param = getattr(layer, param_type)
+            n += int(param.numel())
+
     if mode == 'radius':
         constraint = LpBall(n, ord=ord, diameter=None, radius=value)
     elif mode == 'diameter':
@@ -92,8 +98,6 @@ def get_global_lp_constraint(model, ord=2, value=300, mode='initialization'):
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
-                    param = getattr(layer, param_type)
-                    n += int(param.numel())
                     avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
                     cum_avg_norm += avg_norm
         diameter = 2.0 * value * cum_avg_norm
@@ -101,7 +105,7 @@ def get_global_lp_constraint(model, ord=2, value=300, mode='initialization'):
     else:
         raise ValueError(f"Unknown mode {mode}")
         
-    return constraint
+    return [constraint]
 
 @torch.no_grad()
 def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
@@ -133,7 +137,6 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
-                    param = getattr(layer, param_type)
                     avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
                     cum_avg_norm += avg_norm
         diameter = 2.0 * value * cum_avg_norm
@@ -141,7 +144,7 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
     else:
         raise ValueError(f"Unknown mode {mode}")
         
-    return constraint
+    return [constraint]
 
 
 # Methods for setting local constraints
@@ -164,6 +167,7 @@ def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
                         avg_norm = 1.0
                     init_norms[shape] = avg_norm
 
+    constraints = []
     for name, param in model.named_parameters():
         n = param.numel()
         if mode == 'radius':
@@ -176,7 +180,8 @@ def set_lp_constraints(model, ord=2, value=300, mode='initialization'):
         else:
             raise ValueError(f"Unknown mode {mode}")
         param.constraint = constraint
-    return None
+        constraints.append(constraint)
+    return constraints
 
 
 def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initialization'):
@@ -197,6 +202,7 @@ def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initializ
                         avg_norm = 1.0
                     init_norms[shape] = avg_norm
 
+    constraints = []
     for name, param in model.named_parameters():
         n = param.numel()
 
@@ -221,7 +227,8 @@ def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initializ
         else:
             raise ValueError(f"Unknown mode {mode}")
         param.constraint = constraint
-    return None
+        constraints.append(constraint)
+    return constraints
 
 
 # Constraint classes

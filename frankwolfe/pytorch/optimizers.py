@@ -5,8 +5,10 @@
 # ===========================================================================
 import torch
 
+
 # TODO: How do we handle unconstrained parameters?
 # TODO: Is modifying a large tensor through indexing when dealing with global constraints a good idea?
+# -> Max: will check this
 
 class SFW(torch.optim.Optimizer):
     """Stochastic Frank Wolfe Algorithm
@@ -33,7 +35,8 @@ class SFW(torch.optim.Optimizer):
 
         self.rescale = rescale
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
-        assert not (self.global_constraint and len(self.param_groups) > 1), "This does not work for multiple param_groups yet."
+        assert not (self.global_constraint and len(
+            self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
         defaults = dict(lr=learning_rate, momentum=momentum, dampening=dampening)
         super(SFW, self).__init__(params, defaults)
@@ -72,12 +75,12 @@ class SFW(torch.optim.Optimizer):
                     if 'momentum_buffer' not in param_state:
                         param_state['momentum_buffer'] = d_p.detach().clone()
                     else:
-                        param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1-dampening)
+                        param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1 - dampening)
                     d_p = param_state['momentum_buffer']
-                
+
                 # LMO solution
                 v = p.constraint.lmo(d_p)  # LMO optimal solution
-                
+
                 # Determine learning rate rescaling factor
                 if self.rescale == 'diameter':
                     # Rescale lr by diameter
@@ -99,10 +102,9 @@ class SFW(torch.optim.Optimizer):
         group = self.param_groups[0]
         momentum = group['momentum']
         dampening = group['dampening']
-        
-        # Concatenate parameters inton a single vector
+
+        # Collect relevant parameters
         param_list = [p for p in group['params'] if p.grad is not None]
-        param_vec = torch.cat([p.view(-1) for p in param_list])
 
         # Add momentum, fill grad list with momentum_buffers and concatenate
         grad_list = []
@@ -113,26 +115,26 @@ class SFW(torch.optim.Optimizer):
                 if 'momentum_buffer' not in param_state:
                     param_state['momentum_buffer'] = d_p.detach().clone()
                 else:
-                    param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1-dampening)
+                    param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1 - dampening)
                 d_p = param_state['momentum_buffer']
             grad_list.append(d_p)
         grad_vec = torch.cat([g.view(-1) for g in grad_list])
-        
+
         # LMO solution
         v = self.global_constraint.lmo(grad_vec)
-        
+
         # Determine learning rate rescaling factor
         if self.rescale == 'diameter':
             # Rescale lr by diameter
             factor = 1. / self.global_constraint.get_diameter()
         elif self.rescale == 'gradient':
             # Rescale lr by gradient
-            factor = torch.norm(grad_vec, p=2) / torch.norm(param_vec - v, p=2)
+            factor = torch.norm(grad_vec, p=2) / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
         else:
             # No rescaling
-            factor = 1 
+            factor = 1
         lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
-        
+
         # Update parameters
         for p in param_list:
             numberOfElements = p.numel()
@@ -149,6 +151,7 @@ class SGD(torch.optim.Optimizer):
         momentum = momentum or 0
         dampening = dampening or 0
         weight_decay = weight_decay or 0
+        weight_decay_ord = float(weight_decay_ord)  # Catch string 'inf' input
         if not weight_decay_ord >= 1:
             raise ValueError(f"Invalid weight_decay order: {weight_decay_ord}.")
         if lr < 0.0:
@@ -161,7 +164,7 @@ class SGD(torch.optim.Optimizer):
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
         if nesterov and (momentum == 0 or dampening != 0):
             raise ValueError("Nesterov momentum requires momentum and zero dampening")
-        
+
         self.global_constraint = global_constraint  # If not None, this points to the constraint instance
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
@@ -185,6 +188,12 @@ class SGD(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        # For Linf regularization, we need to compute the maximal element out of all parameters
+        for group in self.param_groups:
+            if group['weight_decay'] > 0 and group['weight_decay_ord'] == float('inf'):
+                group['maxParam'] = max(float(torch.max(torch.abs(p)))
+                                        for p in group['params'] if p.grad is not None)
+
         for group in self.param_groups:
             weight_decay = group['weight_decay']
             weight_decay_ord = group['weight_decay_ord']
@@ -206,17 +215,18 @@ class SGD(torch.optim.Optimizer):
                         d_p = d_p.add(p, alpha=weight_decay)
                     elif weight_decay_ord == float('inf'):
                         # Linf regularization
-                        d_p = d_p.add(torch.sign(p)*(torch.abs(p)==torch.max(torch.abs(p))), alpha=weight_decay)
+                        maxParam = group['maxParam']
+                        d_p = d_p.add(torch.sign(p) * (torch.abs(p) == maxParam), alpha=weight_decay)
                     else:
                         # Arbitrary Lp regularization when p ist not 1, 2 or inf
-                        d_p = d_p.add(torch.sign(p) * torch.abs(p).pow(weight_decay_ord-1), alpha=weight_decay)
+                        d_p = d_p.add(torch.sign(p) * torch.abs(p).pow(weight_decay_ord - 1), alpha=weight_decay)
                 if momentum > 0:
                     param_state = self.state[p]
                     if 'momentum_buffer' not in param_state:
                         buf = param_state['momentum_buffer'] = torch.clone(d_p).detach()
                     else:
                         buf = param_state['momentum_buffer']
-                        buf.mul_(momentum).add_(d_p, alpha=1-dampening)
+                        buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
                     if nesterov:
                         d_p = d_p.add(buf, alpha=momentum)
                     else:
@@ -241,7 +251,6 @@ class SGD(torch.optim.Optimizer):
                 p_proj = p_proj[numberOfElements:]
 
         return loss
-
 
 
 class AdaGradSFW(torch.optim.Optimizer):
