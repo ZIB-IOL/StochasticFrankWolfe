@@ -15,16 +15,16 @@ class SFW(torch.optim.Optimizer):
     Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        learning_rate (float): learning rate between 0.0 and 1.0
-        rescale (string or None): Type of learning_rate rescaling. Must be 'diameter', 'gradient' or None
+        lr (float): learning rate between 0.0 and 1.0
+        rescale (string or None): Type of lr rescaling. Must be 'diameter', 'gradient' or None
         momentum (float): momentum factor, 0 for no momentum
     """
 
-    def __init__(self, params, learning_rate=0.1, rescale='diameter', momentum=0, dampening=0, global_constraint=None):
+    def __init__(self, params, lr=0.1, rescale='diameter', momentum=0, dampening=0, global_constraint=None):
         momentum = momentum or 0
         dampening = dampening or 0
-        if not (0.0 <= learning_rate <= 1.0):
-            raise ValueError("Invalid learning rate: {}".format(learning_rate))
+        if not (0.0 <= lr <= 1.0):
+            raise ValueError("Invalid learning rate: {}".format(lr))
         if not (0.0 <= momentum <= 1.0):
             raise ValueError("Momentum must be between 0 and 1.")
         if not (0.0 <= dampening <= 1.0):
@@ -38,7 +38,7 @@ class SFW(torch.optim.Optimizer):
         assert not (self.global_constraint and len(
             self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
-        defaults = dict(lr=learning_rate, momentum=momentum, dampening=dampening)
+        defaults = dict(lr=lr, momentum=momentum, dampening=dampening)
         super(SFW, self).__init__(params, defaults)
 
     @torch.no_grad()
@@ -151,7 +151,7 @@ class SGD(torch.optim.Optimizer):
         momentum = momentum or 0
         dampening = dampening or 0
         weight_decay = weight_decay or 0
-        weight_decay_ord = float(weight_decay_ord)  # Catch string 'inf' input
+        weight_decay_ord = float(weight_decay) if weight_decay_ord is not None else 2
         if not weight_decay_ord >= 1:
             raise ValueError(f"Invalid weight_decay order: {weight_decay_ord}.")
         if lr < 0.0:
@@ -259,15 +259,15 @@ class AdaGradSFW(torch.optim.Optimizer):
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
         inner_steps (integer, optional): number of inner iterations (default: 2)
-        learning_rate (float, optional): learning rate (default: 1e-2)
+        lr (float, optional): learning rate (default: 1e-2)
         delta (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-10)
         momentum (float, optional): momentum factor
     """
 
-    def __init__(self, params, inner_steps=2, learning_rate=1e-2, delta=1e-8, momentum=0.9):
-        if not 0.0 <= learning_rate:
-            raise ValueError("Invalid learning rate: {}".format(learning_rate))
+    def __init__(self, params, inner_steps=2, lr=1e-2, delta=1e-8, momentum=0.9):
+        if not 0.0 <= lr:
+            raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= momentum <= 1.0:
             raise ValueError("Momentum must be between [0, 1].")
         if not 0.0 <= delta:
@@ -277,7 +277,7 @@ class AdaGradSFW(torch.optim.Optimizer):
 
         self.K = inner_steps
 
-        defaults = dict(lr=learning_rate, delta=delta, momentum=momentum)
+        defaults = dict(lr=lr, delta=delta, momentum=momentum)
         super(AdaGradSFW, self).__init__(params, defaults)
 
         for group in self.param_groups:
