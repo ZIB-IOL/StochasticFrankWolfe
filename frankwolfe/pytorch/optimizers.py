@@ -5,10 +5,7 @@
 # ===========================================================================
 import torch
 
-
 # TODO: How do we handle unconstrained parameters?
-# TODO: Is modifying a large tensor through indexing when dealing with global constraints a good idea?
-# -> Max: will check this
 
 class SFW(torch.optim.Optimizer):
     """Stochastic Frank Wolfe Algorithm
