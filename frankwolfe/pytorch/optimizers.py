@@ -149,7 +149,7 @@ class SGD(torch.optim.Optimizer):
         momentum = momentum or 0
         dampening = dampening or 0
         weight_decay = weight_decay or 0
-        weight_decay_ord = float(weight_decay) if weight_decay_ord is not None else 2
+        weight_decay_ord = float(weight_decay_ord) if weight_decay_ord is not None else 2
         if not weight_decay_ord >= 1:
             raise ValueError(f"Invalid weight_decay order: {weight_decay_ord}.")
         if lr < 0.0:
