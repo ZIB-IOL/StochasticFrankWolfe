@@ -32,11 +32,12 @@ class SFW(torch.optim.Optimizer):
 
         self.rescale = rescale
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
-        assert not (self.global_constraint and len(
-            self.param_groups) > 1), "This does not work for multiple param_groups yet."
+
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening)
         super(SFW, self).__init__(params, defaults)
+        assert not (self.global_constraint and len(
+            self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
     @torch.no_grad()
     def step(self, closure=None):
