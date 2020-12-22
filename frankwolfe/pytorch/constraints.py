@@ -94,7 +94,7 @@ def get_global_lp_constraint(model, ord=2, value=300, mode='initialization'):
     elif mode == 'diameter':
         constraint = LpBall(n, ord=ord, diameter=value, radius=None)
     elif mode == 'initialization':
-        cum_avg_norm, n = 0.0, 0
+        cum_avg_norm = 0.0
         for layer in model.modules():
             if hasattr(layer, 'reset_parameters'):
                 for param_type in [entry for entry in ['weight', 'bias'] if (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
