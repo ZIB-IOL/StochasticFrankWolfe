@@ -23,12 +23,12 @@ class SFW(torch.optim.Optimizer):
         if rescale is None and not (0.0 <= lr <= 1.0):
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not (0.0 <= momentum <= 1.0):
-            raise ValueError("Momentum must be between 0 and 1.")
+            raise ValueError("Momentum must be between 0 and 1, got {momentum} of type {type(momentum)}.")
         if not (0.0 <= dampening <= 1.0):
-            raise ValueError("Dampening must be between 0 and 1.")
+            raise ValueError("Dampening must be between 0 and 1, got {dampening} of type {type(dampening)}.")
         if rescale == 'None': rescale = None
         if not (rescale in ['diameter', 'gradient', None]):
-            raise ValueError("Rescale type must be either 'diameter', 'gradient' or None.")
+            raise ValueError(f"Rescale type must be either 'diameter', 'gradient' or None, got {rescale} of type {type(rescale)}.")
 
         self.rescale = rescale
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
