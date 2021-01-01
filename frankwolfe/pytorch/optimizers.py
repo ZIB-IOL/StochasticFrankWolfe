@@ -20,7 +20,7 @@ class SFW(torch.optim.Optimizer):
     def __init__(self, params, lr=0.1, rescale='diameter', momentum=0, dampening=0, global_constraint=None):
         momentum = momentum or 0
         dampening = dampening or 0
-        if not (0.0 <= lr <= 1.0):
+        if rescale is None and not (0.0 <= lr <= 1.0):
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not (0.0 <= momentum <= 1.0):
             raise ValueError("Momentum must be between 0 and 1.")
