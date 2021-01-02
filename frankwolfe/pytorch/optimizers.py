@@ -33,6 +33,8 @@ class SFW(torch.optim.Optimizer):
         self.rescale = rescale
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
 
+        self.effective_lr = lr  # Just to catch this as a metric
+
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening)
         super(SFW, self).__init__(params, defaults)
@@ -139,6 +141,7 @@ class SFW(torch.optim.Optimizer):
             p.mul_(1 - lr)
             p.add_(v[:numberOfElements].view(p.shape), alpha=lr)
             v = v[numberOfElements:]
+        self.effective_lr = lr  # Just to catch this as a metric
 
 
 class SGD(torch.optim.Optimizer):
