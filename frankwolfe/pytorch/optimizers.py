@@ -4,7 +4,6 @@
 # Description:  Pytorch implementation of Stochastic Frank Wolfe, AdaGradSFW and SGD with projection
 # ===========================================================================
 import torch
-
 # TODO: How do we handle unconstrained parameters?
 
 class SFW(torch.optim.Optimizer):
@@ -327,3 +326,29 @@ class AdaGradSFW(torch.optim.Optimizer):
                     y.add_(y_v_diff, alpha=-gamma)  # -gamma needed as we want to add v-y, not y-v
                 p.copy_(y)
         return loss
+
+
+class Prox_SGD(torch.optim.SGD):
+    """Straightforward implementation of Proximal SGD. Takes as input the same as torch.optim.SGD, but no weight_decay."""
+    def __init__(self, params, prox_operator, **kwargs):
+        assert ('weight_decay' not in kwargs) or (kwargs['weight_decay'] == 0), "Nonzero weight decay to Prox_SGD given."
+        super().__init__(params, **kwargs)
+        self.prox_operator = prox_operator
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        # Perform an SGD step, then apply the proximal operator to all parameters
+        super().step(closure=closure)
+
+        for group in self.param_groups:
+            for p in group['params']:
+                p.copy_ = self.prox_operator(p)
+
+class ProximalOperator:
+    """Static class containing proximal operators, each function returns a function, i.e. the proximal operator."""
+    @staticmethod
+    def soft_thresholding(weight_decay=0.001):
+        """Implements Soft-Thresholding aka Proximal SGD with L1 weight decay"""
+        @torch.no_grad()
+        def operator(x):
+            return torch.sign(x)*torch.nn.functional.relu(torch.abs(x)-weight_decay)
