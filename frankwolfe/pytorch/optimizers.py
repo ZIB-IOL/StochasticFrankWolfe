@@ -342,7 +342,9 @@ class Prox_SGD(torch.optim.SGD):
 
         for group in self.param_groups:
             for p in group['params']:
-                p.copy_ = self.prox_operator(p)
+                if p.grad is None:
+                    continue
+                p.copy_(self.prox_operator(p))
 
 class ProximalOperator:
     """Static class containing proximal operators, each function returns a function, i.e. the proximal operator."""
@@ -352,3 +354,4 @@ class ProximalOperator:
         @torch.no_grad()
         def operator(x):
             return torch.sign(x)*torch.nn.functional.relu(torch.abs(x)-weight_decay)
+        return operator
