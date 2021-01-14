@@ -342,13 +342,13 @@ class LpBall(Constraint):
             else:
                 return torch.zeros_like(x)
         elif self.p == float('inf'):
-            return torch.full_like(x, fill_value=self._radius).masked_fill_(x > 0, -self._radius)
+            return torch.full_like(x, fill_value=-self._radius) * torch.sign(x)
         else:
             sgn_x = torch.sign(x).masked_fill_(x == 0, 1.0)
             absxqp = torch.pow(torch.abs(x), self.q / self.p)
             x_norm = float(torch.pow(torch.norm(x, p=self.q), self.q / self.p))
             if x_norm > tolerance:
-                return -self._radius / x_norm * sgn_x * absxqp
+                return -(self._radius / x_norm) * sgn_x * absxqp
             else:
                 return torch.zeros_like(x)
 
