@@ -277,7 +277,8 @@ def set_k_sparse_constraints(model, K=1, K_frac=None, value=300, mode='initializ
 # Constraint classes
 class Constraint:
     """
-    Parent/Base class for constraints
+    Parent/Base class for constraints.
+    Important note: For pruning to work, Projections and LMOs must be such that 0 entries in the input receive 0 entries in the output.
     :param n: dimension of constraint parameter space
     """
 
