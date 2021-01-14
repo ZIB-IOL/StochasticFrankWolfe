@@ -41,6 +41,16 @@ class SFW(torch.optim.Optimizer):
             self.param_groups) > 1), "This does not work for multiple param_groups yet."
 
     @torch.no_grad()
+    def reset_momentum(self):
+        """Resets momentum, typically used directly after pruning"""
+        for group in self.param_groups:
+            momentum = group['momentum']
+            if momentum > 0:
+                for p in group['params']:
+                    param_state = self.state[p]
+                    if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
+
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
         Args:
@@ -177,6 +187,16 @@ class SGD(torch.optim.Optimizer):
             group.setdefault('nesterov', False)
 
     @torch.no_grad()
+    def reset_momentum(self):
+        """Resets momentum, typically used directly after pruning"""
+        for group in self.param_groups:
+            momentum = group['momentum']
+            if momentum > 0:
+                for p in group['params']:
+                    param_state = self.state[p]
+                    if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
+
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
         Args:
@@ -285,6 +305,16 @@ class AdaGradSFW(torch.optim.Optimizer):
                 param_state['sum'] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
     @torch.no_grad()
+    def reset_momentum(self):
+        """Resets momentum, typically used directly after pruning"""
+        for group in self.param_groups:
+            momentum = group['momentum']
+            if momentum > 0:
+                for p in group['params']:
+                    param_state = self.state[p]
+                    if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
+
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
         Args:
@@ -334,6 +364,16 @@ class Prox_SGD(torch.optim.SGD):
         assert ('weight_decay' not in kwargs) or (kwargs['weight_decay'] == 0), "Nonzero weight decay to Prox_SGD given."
         super().__init__(params, **kwargs)
         self.prox_operator = prox_operator
+
+    @torch.no_grad()
+    def reset_momentum(self):
+        """Resets momentum, typically used directly after pruning"""
+        for group in self.param_groups:
+            momentum = group['momentum']
+            if momentum > 0:
+                for p in group['params']:
+                    param_state = self.state[p]
+                    if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
 
     @torch.no_grad()
     def step(self, closure=None):
