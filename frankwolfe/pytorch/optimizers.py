@@ -389,7 +389,7 @@ class Prox_SGD(torch.optim.SGD):
             for p in group['params']:
                 if p.grad is None:
                     continue
-                p.copy_(self.prox_operator(p))
+                p.copy_(self.prox_operator(x=p, lr=group['lr']))
 
 class ProximalOperator:
     """Static class containing proximal operators, each function returns a function, i.e. the proximal operator."""
@@ -397,6 +397,6 @@ class ProximalOperator:
     def soft_thresholding(weight_decay=0.001):
         """Implements Soft-Thresholding aka Proximal SGD with L1 weight decay"""
         @torch.no_grad()
-        def operator(x):
-            return torch.sign(x)*torch.nn.functional.relu(torch.abs(x)-weight_decay)
+        def operator(x, lr):
+            return torch.sign(x)*torch.nn.functional.relu(torch.abs(x)-lr*weight_decay)
         return operator
