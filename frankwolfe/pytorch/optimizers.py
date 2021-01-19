@@ -362,6 +362,11 @@ class Prox_SGD(torch.optim.SGD):
     """Straightforward implementation of Proximal SGD. Takes as input the same as torch.optim.SGD, but no weight_decay."""
     def __init__(self, params, prox_operator, **kwargs):
         assert ('weight_decay' not in kwargs) or (kwargs['weight_decay'] == 0), "Nonzero weight decay to Prox_SGD given."
+        # Convert none values to default values
+        checkArgList = ['momentum', 'dampening']
+        for arg in checkArgList:
+            if arg in kwargs:
+                kwargs[arg] = kwargs[arg] or 0
         super().__init__(params, **kwargs)
         self.prox_operator = prox_operator
 
