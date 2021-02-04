@@ -98,6 +98,8 @@ def create_unconstraints(model):
 def create_lp_constraints(model, ord=2, value=300, mode='initialization', initializer='glorot_uniform'):
     """Create L_p constraints for each layer, where p == ord, and value depends on mode (is radius, diameter, or
     factor to multiply average initialization norm with)"""
+    ord = float('inf') if ord=='inf' else ord
+    
     constraints = []
 
     for var in model.trainable_variables:
@@ -175,6 +177,10 @@ class Constraint:
 
     def lmo(self, x):
         assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
+
+    def qmo(self, x, a):
+        assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
+        assert np.prod(a.shape) == self.n, f"shape {a.shape} of accumulator does not match dimension {self.n}"
 
     def shift_inside(self, x):
         assert np.prod(x.shape) == self.n, f"shape {x.shape} does not match dimension {self.n}"
@@ -257,6 +263,31 @@ class LpBall(Constraint):
             zero_fn = lambda: tf.zeros_like(x)
             return tf.cond(xnorm > tolerance, normalize_fn, zero_fn)
 
+    def qmo(self, x, a):
+        super().qmo(x, a)
+        if self.p == 1:
+            def proj_x_fn():
+                x_abs = tf.math.abs(x)
+                sorted_idxs = tf.argsort( tf.reshape(x_abs/a, [-1]), direction='DESCENDING' )
+                x_abs_sorted = tf.gather(tf.reshape(x_abs, [-1]), sorted_idxs)
+                a_sorted = tf.gather(tf.reshape(a, [-1]), sorted_idxs)
+
+                temp = tf.math.cumsum(a_sorted*x_abs_sorted, axis=0) - (x_abs_sorted/a_sorted) * tf.math.cumsum(a_sorted**2)
+                mask = tf.math.less_equal(temp, self._radius)
+
+                masked_a_sorted = tf.boolean_mask(a_sorted, mask)
+                masked_x_abs_sorted = tf.boolean_mask(x_abs_sorted, mask)
+                theta = (tf.math.reduce_sum(masked_a_sorted*masked_x_abs_sorted) - self._radius) / tf.math.reduce_sum(masked_a_sorted**2)
+
+                return tf.sign(x) * tf.math.maximum(x_abs - theta*a, tf.zeros_like(x_abs))
+
+            return tf.cond(tf.math.reduce_sum(tf.math.abs(x)*a) > self._radius, proj_x_fn, lambda: x)
+            
+        elif self.p == np.inf:
+            return tf.sign(x) * tf.math.minimum(tf.math.abs(x), self._radius/a)
+        else:
+            raise NotImplementedError(f"Projection not implemented for order {self.p}")
+
     def shift_inside(self, x):
         """Projects x to the LpBall with radius r.
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
@@ -271,10 +302,10 @@ class LpBall(Constraint):
         super().euclidean_project(x)
         if self.p == 1:
             def proj_x_fn():
-                sorted = tf.sort(tf.math.abs(tf.reshape(x, [-1])), direction='DESCENDING')
-                running_mean = (tf.math.cumsum(sorted, axis=0) - self._radius) / tf.range(1, tf.size(sorted) + 1,
-                                                                                          dtype=sorted.dtype)
-                is_less_or_equal = tf.math.less_equal(sorted, running_mean)
+                x_sorted = tf.sort(tf.math.abs(tf.reshape(x, [-1])), direction='DESCENDING')
+                running_mean = (tf.math.cumsum(x_sorted, axis=0) - self._radius) / tf.range(1, tf.size(x_sorted) + 1,
+                                                                                          dtype=x_sorted.dtype)
+                is_less_or_equal = tf.math.less_equal(x_sorted, running_mean)
                 idx = tf.size(is_less_or_equal) - tf.math.reduce_sum(tf.cast(is_less_or_equal, tf.int32)) - 1
                 return tf.sign(x) * tf.math.maximum(tf.math.abs(x) - tf.gather(running_mean, idx), tf.zeros_like(x)), \
                        tf.constant(True, dtype=tf.bool)

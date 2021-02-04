@@ -291,9 +291,9 @@ class AdaSFW(ConstrainedOptimizer):
     def _create_slots(self, var_list):
         for var in var_list:
             self.add_slot(var, 'accumulator',
-                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
             self.add_slot(var, 'y',
-                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))  # , initializer="zeros")
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
 
     def _prepare_local(self, var_device, var_dtype, apply_state):
         super()._prepare_local(var_device, var_dtype, apply_state)
@@ -455,6 +455,101 @@ class SGD(ConstrainedOptimizer):
         return config
 
 
+class Adagrad(ConstrainedOptimizer):
+
+    def __init__(self, learning_rate=0.001, delta=1e-8, name='Adagrad', **kwargs):
+        super().__init__(name, **kwargs)
+        
+        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+        self._set_hyper('delta', kwargs.get('delta', delta))
+
+    def set_learning_rate(self, learning_rate):
+        self._set_hyper('learning_rate', learning_rate)
+
+    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
+        grad = ops.convert_to_tensor(grad, var.dtype.base_dtype)
+
+        learning_rate = math_ops.cast(self._get_hyper('learning_rate'), var.dtype.base_dtype)
+        delta = math_ops.cast(self._get_hyper('delta'), var.dtype.base_dtype)
+        accumulator = state_ops.assign_add(self.get_slot(var, "accumulator"), math_ops.square(grad))
+        H = math_ops.add(delta, math_ops.sqrt(accumulator))
+        sqrtH = math_ops.sqrt(H)
+
+        project_var = constraint.qmo(sqrtH*var - learning_rate*grad/sqrtH, 1/sqrtH)
+        return state_ops.assign(var, project_var/sqrtH)
+
+    def _create_slots(self, var_list):
+        for var in var_list:
+            self.add_slot(var, 'accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
+
+    def _prepare_local(self, var_device, var_dtype, apply_state):
+        super()._prepare_local(var_device, var_dtype, apply_state)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(
+            learning_rate=self._serialize_hyperparameter('learning_rate'),
+            delta=self._serialize_hyperparameter('delta'),
+        ))
+        return config
+
+
+class AMSGrad(ConstrainedOptimizer):
+    def __init__(self, learning_rate=0.01, delta=1e-8, beta1=0.9, beta2=0.999, name='AMSGrad', **kwargs):
+        super().__init__(name, **kwargs)
+
+        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+        self._set_hyper('delta', kwargs.get('delta', delta))
+        self._set_hyper('beta1', kwargs.get('b1', beta1))
+        self._set_hyper('beta2', kwargs.get('b2', beta2))
+
+    def set_learning_rate(self, learning_rate):
+        self._set_hyper('learning_rate', learning_rate)
+
+    def _resource_apply_dense(self, grad, var, constraint, apply_state):
+        grad = ops.convert_to_tensor(grad, var.dtype.base_dtype)
+
+        b1 = math_ops.cast(self._get_hyper('beta1'), var.dtype.base_dtype)
+        m_accumulator = self.get_slot(var, "m_accumulator")
+        momentum = m_accumulator.assign(b1 * m_accumulator + (1 - b1) * grad)
+
+        b2 = math_ops.cast(self._get_hyper('beta2'), var.dtype.base_dtype)
+        v_accumulator = self.get_slot(var, "v_accumulator")
+        v_accumulator.assign(b2 * v_accumulator + (1 - b2) * math_ops.square(grad))
+
+        vhat_accumulator = self.get_slot(var, "vhat_accumulator")
+        vhat_accumulator.assign(tf.math.maximum(vhat_accumulator, v_accumulator))
+
+        delta = math_ops.cast(self._get_hyper('delta'), var.dtype.base_dtype)
+        H = math_ops.add(delta, math_ops.sqrt(vhat_accumulator))
+        sqrtH = math_ops.sqrt(H)
+
+        learning_rate = math_ops.cast(self._get_hyper('learning_rate'), var.dtype.base_dtype)
+
+        project_var = constraint.qmo(sqrtH*var - learning_rate*momentum/sqrtH, 1/sqrtH)
+        return state_ops.assign(var, project_var/sqrtH)
+        
+    def _create_slots(self, var_list):
+        for var in var_list:
+            self.add_slot(var, 'm_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
+            self.add_slot(var, 'v_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
+            self.add_slot(var, 'vhat_accumulator',
+                          init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype))
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(dict(
+            learning_rate=self._serialize_hyperparameter('learning_rate'),
+            delta=self._serialize_hyperparameter('delta'),
+            beta1=self._serialize_hyperparameter('beta1'),
+            beta2=self._serialize_hyperparameter('beta2'),
+        ))
+        return config
+
+
 class Adam(ConstrainedOptimizer):
 
     def __init__(self,
@@ -568,148 +663,69 @@ class Adam(ConstrainedOptimizer):
         return config
 
 
-class Adadelta(ConstrainedOptimizer):
+# class Adadelta(ConstrainedOptimizer):
 
-    def __init__(self,
-                 learning_rate=0.001,
-                 rho=0.95,
-                 epsilon=1e-7,
-                 name='Adadelta',
-                 **kwargs):
-        super(Adadelta, self).__init__(name, **kwargs)
-        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
-        self._set_hyper('decay', self._initial_decay)
-        self._set_hyper('rho', rho)
-        self.epsilon = epsilon or backend_config.epsilon()
+#     def __init__(self,
+#                  learning_rate=0.001,
+#                  rho=0.95,
+#                  epsilon=1e-7,
+#                  name='Adadelta',
+#                  **kwargs):
+#         super(Adadelta, self).__init__(name, **kwargs)
+#         self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
+#         self._set_hyper('decay', self._initial_decay)
+#         self._set_hyper('rho', rho)
+#         self.epsilon = epsilon or backend_config.epsilon()
 
-    def _create_slots(self, var_list):
-        # Separate for-loops to respect the ordering of slot variables from v1.
-        for v in var_list:
-            self.add_slot(v, 'accum_grad')
-        for v in var_list:
-            self.add_slot(v, 'accum_var')
+#     def _create_slots(self, var_list):
+#         # Separate for-loops to respect the ordering of slot variables from v1.
+#         for v in var_list:
+#             self.add_slot(v, 'accum_grad')
+#         for v in var_list:
+#             self.add_slot(v, 'accum_var')
 
-    def _prepare_local(self, var_device, var_dtype, apply_state):
-        super(Adadelta, self)._prepare_local(var_device, var_dtype, apply_state)
-        apply_state[(var_device, var_dtype)].update(
-            dict(
-                epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
-                rho=array_ops.identity(self._get_hyper('rho', var_dtype))))
+#     def _prepare_local(self, var_device, var_dtype, apply_state):
+#         super(Adadelta, self)._prepare_local(var_device, var_dtype, apply_state)
+#         apply_state[(var_device, var_dtype)].update(
+#             dict(
+#                 epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
+#                 rho=array_ops.identity(self._get_hyper('rho', var_dtype))))
 
-    def set_weights(self, weights):
-        params = self.weights
-        # Override set_weights for backward compatibility of Keras V1 optimizer
-        # since it does not include iteration at head of the weight list. Set
-        # iteration to 0.
-        if len(params) == len(weights) + 1:
-            weights = [np.array(0)] + weights
-        super(Adadelta, self).set_weights(weights)
+#     def set_weights(self, weights):
+#         params = self.weights
+#         # Override set_weights for backward compatibility of Keras V1 optimizer
+#         # since it does not include iteration at head of the weight list. Set
+#         # iteration to 0.
+#         if len(params) == len(weights) + 1:
+#             weights = [np.array(0)] + weights
+#         super(Adadelta, self).set_weights(weights)
 
-    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
-        var_device, var_dtype = var.device, var.dtype.base_dtype
-        coefficients = ((apply_state or {}).get((var_device, var_dtype))
-                        or self._fallback_apply_state(var_device, var_dtype))
+#     def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
+#         var_device, var_dtype = var.device, var.dtype.base_dtype
+#         coefficients = ((apply_state or {}).get((var_device, var_dtype))
+#                         or self._fallback_apply_state(var_device, var_dtype))
 
-        accum_grad = self.get_slot(var, 'accum_grad')
-        accum_var = self.get_slot(var, 'accum_var')
-        var_update = training_ops.resource_apply_adadelta(
-            var.handle,
-            accum_grad.handle,
-            accum_var.handle,
-            coefficients['lr_t'],
-            coefficients['rho'],
-            coefficients['epsilon'],
-            grad,
-            use_locking=self._use_locking)
+#         accum_grad = self.get_slot(var, 'accum_grad')
+#         accum_var = self.get_slot(var, 'accum_var')
+#         var_update = training_ops.resource_apply_adadelta(
+#             var.handle,
+#             accum_grad.handle,
+#             accum_var.handle,
+#             coefficients['lr_t'],
+#             coefficients['rho'],
+#             coefficients['epsilon'],
+#             grad,
+#             use_locking=self._use_locking)
 
-        project_var, was_projected = constraint.euclidean_project(var)
-        return state_ops.assign(var, project_var)
+#         project_var, was_projected = constraint.euclidean_project(var)
+#         return state_ops.assign(var, project_var)
 
-    def get_config(self):
-        config = super(Adadelta, self).get_config()
-        config.update({
-            'learning_rate': self._serialize_hyperparameter('learning_rate'),
-            'decay': self._serialize_hyperparameter('decay'),
-            'rho': self._serialize_hyperparameter('rho'),
-            'epsilon': self.epsilon,
-        })
-        return config
-
-
-class Adagrad(ConstrainedOptimizer):
-
-    def __init__(self,
-                 learning_rate=0.001,
-                 initial_accumulator_value=0.1,
-                 epsilon=1e-7,
-                 name='Adagrad',
-                 **kwargs):
-        if initial_accumulator_value < 0.0:
-            raise ValueError('initial_accumulator_value must be non-negative: %s' %
-                             initial_accumulator_value)
-        if epsilon is None:
-            epsilon = backend_config.epsilon()
-        super(Adagrad, self).__init__(name, **kwargs)
-        self._set_hyper('learning_rate', kwargs.get('lr', learning_rate))
-        self._set_hyper('decay', self._initial_decay)
-        self._initial_accumulator_value = initial_accumulator_value
-        self.epsilon = epsilon or backend_config.epsilon()
-
-    def _create_slots(self, var_list):
-        for var in var_list:
-            dtype = var.dtype.base_dtype
-            init = init_ops.constant_initializer(
-                self._initial_accumulator_value, dtype=dtype)
-            self.add_slot(var, 'accumulator', init)
-
-    def _prepare_local(self, var_device, var_dtype, apply_state):
-        super(Adagrad, self)._prepare_local(var_device, var_dtype, apply_state)
-        apply_state[(var_device, var_dtype)].update(
-            dict(
-                epsilon=ops.convert_to_tensor_v2(self.epsilon, var_dtype),
-                neg_lr_t=-apply_state[(var_device, var_dtype)]['lr_t'],
-                zero=array_ops.zeros((), dtype=dtypes.int64)))
-
-    def set_weights(self, weights):
-        params = self.weights
-        # Override set_weights for backward compatibility of Keras V1 optimizer
-        # since it does not include iteration at head of the weight list. Set
-        # iteration to 0.
-        if len(params) == len(weights) + 1:
-            weights = [np.array(0)] + weights
-        super(Adagrad, self).set_weights(weights)
-
-    @classmethod
-    def from_config(cls, config, custom_objects=None):
-        if 'initial_accumulator_value' not in config:
-            config['initial_accumulator_value'] = 0.1
-        if 'lr' in config:
-            config['learning_rate'] = config.pop('lr')
-        return cls(**config)
-
-    def _resource_apply_dense(self, grad, var, constraint, apply_state=None):
-        var_device, var_dtype = var.device, var.dtype.base_dtype
-        coefficients = ((apply_state or {}).get((var_device, var_dtype))
-                        or self._fallback_apply_state(var_device, var_dtype))
-
-        acc = self.get_slot(var, 'accumulator')
-        var_update = training_ops.resource_apply_adagrad_v2(
-            var.handle,
-            acc.handle,
-            coefficients['lr_t'],
-            coefficients['epsilon'],
-            grad,
-            use_locking=self._use_locking)
-
-        project_var, was_projected = constraint.euclidean_project(var)
-        return state_ops.assign(var, project_var)
-
-    def get_config(self):
-        config = super(Adagrad, self).get_config()
-        config.update({
-            'learning_rate': self._serialize_hyperparameter('learning_rate'),
-            'decay': self._serialize_hyperparameter('decay'),
-            'initial_accumulator_value': self._initial_accumulator_value,
-            'epsilon': self.epsilon,
-        })
-        return config
+#     def get_config(self):
+#         config = super(Adadelta, self).get_config()
+#         config.update({
+#             'learning_rate': self._serialize_hyperparameter('learning_rate'),
+#             'decay': self._serialize_hyperparameter('decay'),
+#             'rho': self._serialize_hyperparameter('rho'),
+#             'epsilon': self.epsilon,
+#         })
+#         return config
