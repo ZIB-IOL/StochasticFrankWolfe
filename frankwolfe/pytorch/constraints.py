@@ -474,3 +474,57 @@ class L0Ball(Constraint):
         indices = torch.topk(torch.abs(x).view(-1), k=self.k).indices
         z.view(-1)[indices] = x.view(-1)[indices]
         return z
+
+class KNormBall(Constraint):
+    """
+        # Convex Hull of union of B_1(r) and B_inf(r/k)
+    """
+
+    def __init__(self, n, K=1, diameter=None, radius=None):
+        super().__init__(n)
+
+        self.k = min(K, n)
+
+        if diameter is None and radius is None:
+            raise ValueError("Neither diameter nor radius given")
+        elif diameter is None:
+            self._radius = radius
+            self.rhombus = LpBall(n, ord=1, diameter=None, radius=self._radius)
+            self.cube = LpBall(n, ord=float('inf'), diameter=None, radius=self._radius/self.k)
+            self._diameter = max(self.rhombus._diameter, self.cube._diameter)
+        elif radius is None:
+            self._diameter = diameter
+            self._radius = 0.5 * self._diameter if math.sqrt(n)/self.k <= 1 else 0.5 * self._diameter * self.k/math.sqrt(n)
+            self.rhombus = LpBall(n, ord=1, diameter=None, radius=self._radius)
+            self.cube = LpBall(n, ord=float('inf'), diameter=None, radius=self._radius/self.k)
+        else:
+            raise ValueError("Both diameter and radius given")
+
+    @torch.no_grad()
+    def lmo(self, x):
+        """Returns v in KNormBall w/ radius r minimizing v*x"""
+        super().lmo(x)
+        rhombus_candidate = self.rhombus.lmo(x)
+        cube_candidate = self.cube.lmo(x)
+
+        rhombus_value = torch.dot(rhombus_candidate.flatten(), x.flatten())
+        cube_value = torch.dot(cube_candidate.flatten(), x.flatten())
+        return rhombus_candidate if cube_value > rhombus_value else cube_candidate
+
+    @torch.no_grad()
+    def shift_inside(self, x):
+        """Projects x to the KNormBall with radius r.
+        NOTE: This is a valid projection, although not the one mapping to minimum distance points.
+        """
+        super().shift_inside(x)
+        k_norm = self.k_norm(x)
+        return self._radius * x.div(k_norm) if k_norm > self._radius else x
+
+    @torch.no_grad()
+    def euclidean_project(self, x):
+        super().euclidean_project(x)
+        raise NotImplementedError(f"Projection not implemented for KNormBall.")
+
+    @torch.no_grad()
+    def k_norm(self, x):
+        return float(torch.sum(torch.topk(torch.abs(x.flatten()), k=self.k).values))
