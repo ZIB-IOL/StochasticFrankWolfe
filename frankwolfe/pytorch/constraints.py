@@ -114,7 +114,8 @@ def get_global_lp_constraint(model, ord=2, value=300, mode='initialization'):
                 for param_type in [entry for entry in ['weight', 'bias'] if
                                    (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
                     avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
-                    cum_avg_norm += avg_norm
+                    cum_avg_norm += avg_norm**2
+        cum_avg_norm = math.sqrt(cum_avg_norm)
         diameter = 2.0 * value * cum_avg_norm
         constraint = LpBall(n, ord=ord, diameter=diameter, radius=None)
     else:
@@ -156,7 +157,8 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
                 for param_type in [entry for entry in ['weight', 'bias'] if
                                    (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
                     avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
-                    cum_avg_norm += avg_norm
+                    cum_avg_norm += avg_norm ** 2
+        cum_avg_norm = math.sqrt(cum_avg_norm)
         diameter = 2.0 * value * cum_avg_norm
         constraint = KSparsePolytope(n, K=real_K, diameter=diameter, radius=None)
     else:
