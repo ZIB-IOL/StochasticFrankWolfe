@@ -167,6 +167,48 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
     return [constraint]
 
 @torch.no_grad()
+def get_global_knormball_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
+    """Create KNormBall constraints for entire model, and value depends on mode (is radius, diameter, or
+        factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
+    n = 0
+    for layer in model.modules():
+        for param_type in [entry for entry in ['weight', 'bias'] if
+                           (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
+            param = getattr(layer, param_type)
+            n += int(param.numel())
+
+    if K_frac is None and K is None:
+        raise ValueError("Both K and K_frac are None")
+    elif K_frac is not None and K is not None:
+        raise ValueError("Both K and K_frac given.")
+    elif K_frac is None:
+        real_K = min(int(K), n)
+    elif K is None:
+        real_K = min(int(K_frac * n), n)
+    else:
+        real_K = min(max(int(K), int(K_frac * n)), n)
+
+    if mode == 'radius':
+        constraint = KNormBall(n, K=real_K, diameter=None, radius=value)
+    elif mode == 'diameter':
+        constraint = KNormBall(n, K=real_K, diameter=value, radius=None)
+    elif mode == 'initialization':
+        cum_avg_norm = 0.0
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if
+                                   (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    cum_avg_norm += avg_norm ** 2
+        cum_avg_norm = math.sqrt(cum_avg_norm)
+        diameter = 2.0 * value * cum_avg_norm
+        constraint = KNormBall(n, K=real_K, diameter=diameter, radius=None)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+    return [constraint]
+
+@torch.no_grad()
 def get_global_k_L0_constraint(model, K=1, K_frac=None):
     """Create L0 constraints for entire model. K can be given either as an absolute (K) or relative value (K_frac)."""
     n = 0
