@@ -402,10 +402,10 @@ class ProximalOperator:
         return operator
 
     @staticmethod
-    def knorm_soft_thresholding(weight_decay=0.001):
+    def knorm_soft_thresholding(weight_decay=0.001, k=1):
         """Implements soft thresholding for regularization term wd*(||x||_1 -||x||_[k])"""
         @torch.no_grad()
-        def operator(x, lr, k):
+        def operator(x, lr):
             indices = torch.topk(torch.abs(x.flatten()), k=k).indices
             z = torch.sign(x)*torch.nn.functional.relu(torch.abs(x)-lr*weight_decay)
             z.view(-1)[indices] = x.view(-1)[indices]
