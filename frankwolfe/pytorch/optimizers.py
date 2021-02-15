@@ -360,7 +360,7 @@ class AdaGradSFW(torch.optim.Optimizer):
 
 class Prox_SGD(torch.optim.SGD):
     """Straightforward implementation of Proximal SGD. Takes as input the same as torch.optim.SGD, but no weight_decay."""
-    def __init__(self, params, prox_operator, **kwargs):
+    def __init__(self, params, prox_operator, global_constraint=False, **kwargs):
         assert ('weight_decay' not in kwargs) or (kwargs['weight_decay'] == 0), "Nonzero weight decay to Prox_SGD given."
         # Convert none values to default values
         checkArgList = ['momentum', 'dampening']
@@ -369,6 +369,7 @@ class Prox_SGD(torch.optim.SGD):
                 kwargs[arg] = kwargs[arg] or 0
         super().__init__(params, **kwargs)
         self.prox_operator = prox_operator
+        self.global_constraint = global_constraint
 
     @torch.no_grad()
     def reset_momentum(self):
@@ -385,11 +386,24 @@ class Prox_SGD(torch.optim.SGD):
         # Perform an SGD step, then apply the proximal operator to all parameters
         super().step(closure=closure)
 
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                p.copy_(self.prox_operator(x=p, lr=group['lr']))
+        if not self.global_constraint:
+            # Do the iterative default step
+            for group in self.param_groups:
+                for p in group['params']:
+                    if p.grad is None:
+                        continue
+                    p.copy_(self.prox_operator(x=p, lr=group['lr']))
+        elif self.global_constraint:
+            group = self.param_groups[0]
+            param_list = [p for p in group['params'] if p.grad is not None]
+            result = self.prox_operator(x=torch.cat([p.view(-1) for p in group['params'] if p.grad is not None]), lr=group['lr'])
+            # Update parameters
+            for p in param_list:
+                numberOfElements = p.numel()
+                p.copy_(result[:numberOfElements].view(p.shape))
+                result = result[numberOfElements:]
+
+
 
 class ProximalOperator:
     """Static class containing proximal operators, each function returns a function, i.e. the proximal operator."""
