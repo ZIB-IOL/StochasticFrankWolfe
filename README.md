@@ -15,5 +15,5 @@
 *Authors: Cyrille W. Combettes, Christoph Spiegel, Sebastian Pokutta*
 
 * [arxiv.org/abs/2009.14114](https://arxiv.org/abs/2009.14114)
-* [Colab Notebook for convex objectives](https://colab.research.google.com/drive/1XYYZ3SPsppR8QQq2lVrapj7G7kbWotPg) (not using this repository)
-* [Colab Notebook for non-convex objectives (TensorFlow)](https://colab.research.google.com/drive/16OU67J7c4M0LcQWrgR5Nd3oOf3n3A4K7)
+* [Colab Notebook for convex objectives](https://colab.research.google.com/drive/1hwa0bzMcMtpVESIiQfCw8il9jKC-pbfa) (not using this repository)
+* [Colab Notebook for non-convex objectives (TensorFlow)](https://colab.research.google.com/drive/13su1LqZEWajgEucJHpCdniQ5W91q3NNW)
