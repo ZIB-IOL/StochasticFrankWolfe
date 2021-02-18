@@ -4,6 +4,7 @@
 # Description:  Pytorch implementation of Stochastic Frank Wolfe, AdaGradSFW and SGD with projection
 # ===========================================================================
 import torch
+from collections import OrderedDict
 # TODO: How do we handle unconstrained parameters?
 
 class SFW(torch.optim.Optimizer):
@@ -157,7 +158,7 @@ class SGD(torch.optim.Optimizer):
     """Modified SGD which allows projection via Constraint class"""
 
     def __init__(self, params, lr=0.1, momentum=0, dampening=0, nesterov=False,
-                 weight_decay=0, weight_decay_ord=2, global_constraint=None):
+                 weight_decay=0, weight_decay_ord=2, global_constraint=None, gradient_callback=None):
         momentum = momentum or 0
         dampening = dampening or 0
         weight_decay = weight_decay or 0
@@ -176,6 +177,7 @@ class SGD(torch.optim.Optimizer):
             raise ValueError("Nesterov momentum requires momentum and zero dampening")
 
         self.global_constraint = global_constraint  # If not None, this points to the constraint instance
+        self.gradient_callback = gradient_callback # If not None, call this function right before the update step
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
                         weight_decay=weight_decay, weight_decay_ord=weight_decay_ord, nesterov=nesterov)
@@ -208,13 +210,18 @@ class SGD(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        grad_list = []  # Collect gradients if we need to call the gradient_callback
+        param_dict = OrderedDict()
+        for i in range(len(self.param_groups)):
+            param_dict[i] = []
+
         # For Linf regularization, we need to compute the maximal element out of all parameters
         for group in self.param_groups:
             if group['weight_decay'] > 0 and group['weight_decay_ord'] == float('inf'):
                 group['maxParam'] = max(float(torch.max(torch.abs(p)))
                                         for p in group['params'] if p.grad is not None)
 
-        for group in self.param_groups:
+        for idx, group in enumerate(self.param_groups):
             weight_decay = group['weight_decay']
             weight_decay_ord = group['weight_decay_ord']
             momentum = group['momentum']
@@ -251,20 +258,36 @@ class SGD(torch.optim.Optimizer):
                         d_p = d_p.add(buf, alpha=momentum)
                     else:
                         d_p = buf
+                if self.gradient_callback is not None:
+                    grad_list.append(d_p.view(-1))
+                    param_dict[idx].append(p)
+                else:
+                    p.add_(d_p, alpha=-group['lr'])
 
-                p.add_(d_p, alpha=-group['lr'])
+                    # Project if necessary
+                    if not self.global_constraint:  # We have to project afterwards
+                        if hasattr(p, 'constraint'):
+                            p.copy_(p.constraint.euclidean_project(p))
 
-                # Project if necessary
-                if not self.global_constraint:  # We have to project afterwards
-                    if hasattr(p, 'constraint'):
-                        p.copy_(p.constraint.euclidean_project(p))
+        if self.gradient_callback is not None:
+            d_p = self.gradient_callback(torch.cat(grad_list))
+            for idx in param_dict:
+                group = self.param_groups[idx]
+                for p in param_dict[idx]:
+                    numberOfElements = p.numel()
+                    p.add_(d_p[:numberOfElements].view(p.shape), alpha=-group['lr'])
+                    d_p = d_p[numberOfElements:]
+                    # Project if necessary
+                    if not self.global_constraint:  # We have to project afterwards
+                        if hasattr(p, 'constraint'):
+                            p.copy_(p.constraint.euclidean_project(p))
 
         if self.global_constraint:
             # Project entire gradient vector
             assert len(self.param_groups) == 1, "This does not work for multiple param_groups yet."
-            param_list = [p for p in self.param_groups[0]['params'] if p.grad is not None]
-            p_proj = self.global_constraint.euclidean_project(torch.cat([p.view(-1) for p in param_list]))
-            for p in param_list:
+            param_dict = [p for p in self.param_groups[0]['params'] if p.grad is not None]
+            p_proj = self.global_constraint.euclidean_project(torch.cat([p.view(-1) for p in param_dict]))
+            for p in param_dict:
                 numberOfElements = p.numel()
                 p.copy_(p_proj[:numberOfElements].view(p.shape))
                 p_proj = p_proj[numberOfElements:]
