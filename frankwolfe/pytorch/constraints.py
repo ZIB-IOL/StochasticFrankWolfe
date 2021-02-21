@@ -167,6 +167,48 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
     return [constraint]
 
 @torch.no_grad()
+def get_global_smooth_k_sparse_ball_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
+    """Create KSparseBall constraints for entire model, and value depends on mode (is radius, diameter, or
+        factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
+    n = 0
+    for layer in model.modules():
+        for param_type in [entry for entry in ['weight', 'bias'] if
+                           (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
+            param = getattr(layer, param_type)
+            n += int(param.numel())
+
+    if K_frac is None and K is None:
+        raise ValueError("Both K and K_frac are None")
+    elif K_frac is not None and K is not None:
+        raise ValueError("Both K and K_frac given.")
+    elif K_frac is None:
+        real_K = min(int(K), n)
+    elif K is None:
+        real_K = min(int(K_frac * n), n)
+    else:
+        real_K = min(max(int(K), int(K_frac * n)), n)
+
+    if mode == 'radius':
+        constraint = KSparseBall(n, K=real_K, diameter=None, radius=value)
+    elif mode == 'diameter':
+        constraint = KSparseBall(n, K=real_K, diameter=value, radius=None)
+    elif mode == 'initialization':
+        cum_avg_norm = 0.0
+        for layer in model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                for param_type in [entry for entry in ['weight', 'bias'] if
+                                   (hasattr(layer, entry) and type(getattr(layer, entry)) != type(None))]:
+                    avg_norm = get_avg_init_norm(layer, param_type=param_type, ord=2)
+                    cum_avg_norm += avg_norm ** 2
+        cum_avg_norm = math.sqrt(cum_avg_norm)
+        diameter = 2.0 * value * cum_avg_norm
+        constraint = KSparseBall(n, K=real_K, diameter=diameter, radius=None)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
+
+    return [constraint]
+
+@torch.no_grad()
 def get_global_knormball_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
     """Create KNormBall constraints for entire model, and value depends on mode (is radius, diameter, or
         factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
@@ -430,6 +472,59 @@ class LpBall(Constraint):
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
 
+class KSparseBall(Constraint):
+    """
+    # Convex hull of all v s.t. ||v||_2 <= r, ||v||_0 = k
+    # This is a 'smooth' version of the KSparsePolytope, i.e. a mixture of KSparsePolytope and L2Ball allowing sparse activations of different magnitude
+    """
+
+    def __init__(self, n, K=1, diameter=None, radius=None):
+        super().__init__(n)
+
+        self.k = min(K, n)
+
+        if diameter is None and radius is None:
+            raise ValueError("Neither diameter nor radius given")
+        elif diameter is None:
+            self._radius = radius
+            self._diameter = 2.0 * radius
+        elif radius is None:
+            self._radius = diameter / 2.0
+            self._diameter = diameter
+        else:
+            raise ValueError("Both diameter and radius given")
+
+    @torch.no_grad()
+    def lmo(self, x):
+        """Returns v in KSparseBall w/ radius r minimizing v*x"""
+        super().lmo(x)
+        v = torch.zeros_like(x)
+        maxIndices = torch.topk(torch.abs(x.flatten()), k=self.k).indices
+        v.view(-1)[maxIndices] = x.view(-1)[maxIndices] # Projection to axis
+        v_norm = float(torch.norm(v, p=2))
+        if v_norm > tolerance:
+            return -self._radius * v.div(v_norm)    # Projection to Ball
+        else:
+            return torch.zeros_like(x)
+
+    @torch.no_grad()
+    def shift_inside(self, x):
+        """Projects x to the KSparseBall w/ radius r.
+        NOTE: This is a valid projection, although not the one mapping to minimum distance points.
+        """
+        super().shift_inside(x)
+        x_norm = torch.norm(x, p=2)
+        v = self._radius * x.div(x_norm) if x_norm > self._radius else x    # Shift to L2Ball of radius self._radius
+
+        # Idea: Find convex combination of r*{+-e_i} close to v
+        canonicalBasisRepresentation = self._radius * v.div(torch.norm(v, p=1))
+        # If the canonicalBasisRepresentation is farther away from v, use v since it lies in the KSparseBall, otherwise use the canonicalBasisRepresentation
+        return canonicalBasisRepresentation if torch.norm(canonicalBasisRepresentation, p=2) <= torch.norm(v, p=2) else v
+
+    @torch.no_grad()
+    def euclidean_project(self, x):
+        super().euclidean_project(x)
+        raise NotImplementedError(f"Projection not implemented for KSparseBall.")
 
 class KSparsePolytope(Constraint):
     """
