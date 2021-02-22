@@ -495,6 +495,9 @@ class KSparseBall(Constraint):
         else:
             raise ValueError("Both diameter and radius given")
 
+    def update_k(self, k: int) -> None:
+        self.k = k
+
     @torch.no_grad()
     def lmo(self, x):
         """Returns v in KSparseBall w/ radius r minimizing v*x"""
