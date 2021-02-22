@@ -474,8 +474,9 @@ class LpBall(Constraint):
 
 class KSparseBall(Constraint):
     """
-    # Convex hull of all v s.t. ||v||_2 <= r, ||v||_0 = k
+    # Convex hull of all v s.t. ||v||_2 <= r, ||v||_0 <= k
     # This is a 'smooth' version of the KSparsePolytope, i.e. a mixture of KSparsePolytope and L2Ball allowing sparse activations of different magnitude
+    # Note that the oracle will always return a vector v s.t. ||v||_0 == k, unless the input x satisfied ||x||_0 < k.
     """
 
     def __init__(self, n, K=1, diameter=None, radius=None):
@@ -511,6 +512,7 @@ class KSparseBall(Constraint):
     def shift_inside(self, x):
         """Projects x to the KSparseBall w/ radius r.
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
+        # ToDo: this might be suboptimal
         """
         super().shift_inside(x)
         x_norm = torch.norm(x, p=2)
