@@ -534,7 +534,7 @@ class KSupportNormBall(Constraint):
         running_mean = running_mean[-self.k:]  # Throw away everything but the last entries k entries
         running_mean = running_mean / torch.arange(1, self.k + 1, device=x.device)
         lower = sorted_increasing[-self.k:]
-        upper = torch.cat([sorted_increasing[-(self.k-1):], torch.tensor([float('inf')])])
+        upper = torch.cat([sorted_increasing[-(self.k-1):], torch.tensor([float('inf')], device=x.device)])
         r = int(torch.nonzero(torch.logical_and(upper > running_mean, running_mean >= lower), as_tuple=True)[0])
 
 
