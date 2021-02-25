@@ -167,8 +167,8 @@ def get_global_k_sparse_constraint(model, K=1, K_frac=None, value=300, mode='ini
     return [constraint]
 
 @torch.no_grad()
-def get_global_smooth_k_sparse_ball_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
-    """Create KSparseBall constraints for entire model, and value depends on mode (is radius, diameter, or
+def get_global_k_support_norm_ball_constraint(model, K=1, K_frac=None, value=300, mode='initialization'):
+    """Create KSupportNormBall constraints for entire model, and value depends on mode (is radius, diameter, or
         factor to multiply average initialization norm with). K can be given either as an absolute (K) or relative value (K_frac)."""
     n = 0
     for layer in model.modules():
@@ -189,9 +189,9 @@ def get_global_smooth_k_sparse_ball_constraint(model, K=1, K_frac=None, value=30
         real_K = min(max(int(K), int(K_frac * n)), n)
 
     if mode == 'radius':
-        constraint = KSparseBall(n, K=real_K, diameter=None, radius=value)
+        constraint = KSupportNormBall(n, K=real_K, diameter=None, radius=value)
     elif mode == 'diameter':
-        constraint = KSparseBall(n, K=real_K, diameter=value, radius=None)
+        constraint = KSupportNormBall(n, K=real_K, diameter=value, radius=None)
     elif mode == 'initialization':
         cum_avg_norm = 0.0
         for layer in model.modules():
@@ -202,7 +202,7 @@ def get_global_smooth_k_sparse_ball_constraint(model, K=1, K_frac=None, value=30
                     cum_avg_norm += avg_norm ** 2
         cum_avg_norm = math.sqrt(cum_avg_norm)
         diameter = 2.0 * value * cum_avg_norm
-        constraint = KSparseBall(n, K=real_K, diameter=diameter, radius=None)
+        constraint = KSupportNormBall(n, K=real_K, diameter=diameter, radius=None)
     else:
         raise ValueError(f"Unknown mode {mode}")
 
@@ -472,11 +472,12 @@ class LpBall(Constraint):
         else:
             raise NotImplementedError(f"Projection not implemented for order {self.p}")
 
-class KSparseBall(Constraint):
+class KSupportNormBall(Constraint):
     """
     # Convex hull of all v s.t. ||v||_2 <= r, ||v||_0 <= k
     # This is a 'smooth' version of the KSparsePolytope, i.e. a mixture of KSparsePolytope and L2Ball allowing sparse activations of different magnitude
     # Note that the oracle will always return a vector v s.t. ||v||_0 == k, unless the input x satisfied ||x||_0 < k.
+    # This Ball is due to Argyriou et al (2012)
     """
 
     def __init__(self, n, K=1, diameter=None, radius=None):
@@ -500,7 +501,7 @@ class KSparseBall(Constraint):
 
     @torch.no_grad()
     def lmo(self, x):
-        """Returns v in KSparseBall w/ radius r minimizing v*x"""
+        """Returns v in KSupportNormBall w/ radius r minimizing v*x"""
         super().lmo(x)
         v = torch.zeros_like(x)
         maxIndices = torch.topk(torch.abs(x.flatten()), k=self.k).indices
@@ -513,23 +514,37 @@ class KSparseBall(Constraint):
 
     @torch.no_grad()
     def shift_inside(self, x):
-        """Projects x to the KSparseBall w/ radius r.
+        """Projects x to the KSupportNormBall w/ radius r.
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
-        # ToDo: this might be suboptimal
         """
         super().shift_inside(x)
-        x_norm = torch.norm(x, p=2)
-        v = self._radius * x.div(x_norm) if x_norm > self._radius else x    # Shift to L2Ball of radius self._radius
-
-        # Idea: Find convex combination of r*{+-e_i} close to v
-        canonicalBasisRepresentation = self._radius * v.div(torch.norm(v, p=1))
-        # If the canonicalBasisRepresentation is farther away from v, use v since it lies in the KSparseBall, otherwise use the canonicalBasisRepresentation
-        return canonicalBasisRepresentation if torch.norm(canonicalBasisRepresentation, p=2) <= torch.norm(v, p=2) else v
+        x_norm = self.k_support_norm(x)
+        return self._radius * x.div(x_norm) if x_norm > self._radius else x
 
     @torch.no_grad()
     def euclidean_project(self, x):
         super().euclidean_project(x)
-        raise NotImplementedError(f"Projection not implemented for KSparseBall.")
+        raise NotImplementedError(f"Projection not implemented for KSupportNormBall.")
+
+    @torch.no_grad()
+    def k_support_norm(self, x):
+        """Computes the k-support-norm of x"""
+        sorted_increasing = torch.sort(torch.abs(x.flatten()), descending=False).values
+        running_mean = torch.cumsum(sorted_increasing, 0)  # Compute the entire running_mean since this is optimized
+        running_mean = running_mean[-self.k:]  # Throw away everything but the last entries k entries
+        running_mean = running_mean / torch.arange(1, self.k + 1, device=x.device)
+        lower = sorted_increasing[-self.k:]
+        upper = torch.cat([sorted_increasing[-(self.k-1):], torch.tensor([float('inf')])])
+        r = int(torch.nonzero(torch.logical_and(upper > running_mean, running_mean >= lower), as_tuple=True)[0])
+
+
+        # With r, we can now compute the norm
+        d = x.numel()
+        x_right = 1/(r+1) * torch.sum(sorted_increasing[:d-(self.k-r)+1]).pow(2)
+        x_left = torch.sum(sorted_increasing[-(self.k-1-r):].pow(2)) if r < self.k - 1 else 0
+        x_norm = torch.sqrt(x_left + x_right)
+        return float(x_norm)
+
 
 class KSparsePolytope(Constraint):
     """
