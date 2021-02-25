@@ -535,7 +535,8 @@ class KSupportNormBall(Constraint):
         running_mean = running_mean / torch.arange(1, self.k + 1, device=x.device)
         lower = sorted_increasing[-self.k:]
         upper = torch.cat([sorted_increasing[-(self.k-1):], torch.tensor([float('inf')], device=x.device)])
-        r = int(torch.nonzero(torch.logical_and(upper > running_mean, running_mean >= lower), as_tuple=True)[0])
+        relevantIndices = torch.nonzero(torch.logical_and(upper > running_mean, running_mean >= lower))[0]
+        r = int(relevantIndices[0]) # Should have only one element, otherwise its a numerical problem -> pick first
 
 
         # With r, we can now compute the norm
