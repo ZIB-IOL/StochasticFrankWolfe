@@ -527,7 +527,7 @@ class KSupportNormBall(Constraint):
         raise NotImplementedError(f"Projection not implemented for KSupportNormBall.")
 
     @torch.no_grad()
-    def k_support_norm(self, x):
+    def k_support_norm(self, x, tol=1e-10):
         """Computes the k-support-norm of x"""
         sorted_increasing = torch.sort(torch.abs(x.flatten()), descending=False).values
         running_mean = torch.cumsum(sorted_increasing, 0)  # Compute the entire running_mean since this is optimized
@@ -535,7 +535,7 @@ class KSupportNormBall(Constraint):
         running_mean = running_mean / torch.arange(1, self.k + 1, device=x.device)
         lower = sorted_increasing[-self.k:]
         upper = torch.cat([sorted_increasing[-(self.k-1):], torch.tensor([float('inf')], device=x.device)])
-        relevantIndices = torch.nonzero(torch.logical_and(upper > running_mean, running_mean >= lower))[0]
+        relevantIndices = torch.nonzero(torch.logical_and(upper + tol > running_mean, running_mean + tol >= lower))[0]
         r = int(relevantIndices[0]) # Should have only one element, otherwise its a numerical problem -> pick first
 
 
