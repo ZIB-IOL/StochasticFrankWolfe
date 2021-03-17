@@ -484,7 +484,6 @@ class KSupportNormBall(Constraint):
         super().__init__(n)
 
         self.k = min(K, n)
-
         if diameter is None and radius is None:
             raise ValueError("Neither diameter nor radius given")
         elif diameter is None:
@@ -503,9 +502,17 @@ class KSupportNormBall(Constraint):
     def lmo(self, x):
         """Returns v in KSupportNormBall w/ radius r minimizing v*x"""
         super().lmo(x)
-        v = torch.zeros_like(x)
-        maxIndices = torch.topk(torch.abs(x.flatten()), k=self.k).indices
-        v.view(-1)[maxIndices] = x.view(-1)[maxIndices] # Projection to axis
+        d = x.numel()
+        if self.k <= d//2:
+            # It's fast to get the maximal k values
+            v = torch.zeros_like(x)
+            maxIndices = torch.topk(torch.abs(x.flatten()), k=self.k).indices
+            v.view(-1)[maxIndices] = x.view(-1)[maxIndices] # Projection to axis
+        else:
+            # Faster to get the n-d smallest values
+            v = x.clone().detach()
+            minIndices = torch.topk(torch.abs(x.flatten()), k=d-self.k, largest=False).indices
+            v.view(-1)[minIndices] = 0  # Projection to axis
         v_norm = float(torch.norm(v, p=2))
         if v_norm > tolerance:
             return -self._radius * v.div(v_norm)    # Projection to Ball
