@@ -591,21 +591,20 @@ class KSparsePolytope(Constraint):
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
         """
         super().shift_inside(x)
-        L1Norm = float(torch.norm(x, p=1))
-        LinfNorm = float(torch.norm(x, p=float('inf')))
-        if L1Norm > self._radius * self.k or LinfNorm > self._radius:
-            x_norm = max(L1Norm, LinfNorm)
-            x_unit = x.div(x_norm)
-            factor = min(math.floor(1. / float(torch.norm(x_unit, p=float('inf')))), self.k)
-            assert 1 <= factor <= self.k
-            return factor * self._radius * x_unit
-        else:
-            return x
+        x_norm = self.k_sparse_norm(x)
+        return self._radius * x.div(x_norm) if x_norm > self._radius else x
 
     @torch.no_grad()
     def euclidean_project(self, x):
         super().euclidean_project(x)
         raise NotImplementedError(f"Projection not implemented for K-sparse polytope.")
+
+    @torch.no_grad()
+    def k_sparse_norm(self, x):
+        """Computes the k-sparse-norm of x"""
+        Linf = torch.norm(x, p=float('inf'))
+        L1k = torch.norm(x/self.k, p=1)
+        return float(max(Linf, L1k))
 
 
 class L0Ball(Constraint):
