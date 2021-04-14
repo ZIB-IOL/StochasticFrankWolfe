@@ -384,6 +384,14 @@ class Constraint:
     def lmo(self, x):
         assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
+    def npo(self, x, d_x, penalty):
+        assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
+
+    @torch.no_grad()
+    def get_npo_reformulation(self, x, d_x, penalty):
+        # Computes the vector on which the LMO is called to solve the NPO, see Eq. 3 of Garber et al. (2021)
+        return x - (1./(2*penalty))*d_x
+
     def shift_inside(self, x):
         assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
 
@@ -438,6 +446,14 @@ class LpBall(Constraint):
                 return -(self._radius / x_norm) * sgn_x * absxqp
             else:
                 return torch.zeros_like(x)
+
+    @torch.no_grad()
+    def npo(self, x, d_x, penalty):
+        """Returns v with norm(v, self.p) <= r minimizing [v*x + penalty*||v-x||^2]"""
+        super().npo(x, d_x, penalty)
+        y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
+        return self.lmo(-2*y)
+
 
     @torch.no_grad()
     def shift_inside(self, x):
@@ -520,6 +536,13 @@ class KSupportNormBall(Constraint):
             return torch.zeros_like(x)
 
     @torch.no_grad()
+    def npo(self, x, d_x, penalty):
+        """Returns v in KSupportNormBall w/ radius r minimizing [v*x + penalty*||v-x||^2]"""
+        super().npo(x, d_x, penalty)
+        y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
+        return self.lmo(-2*y)
+
+    @torch.no_grad()
     def shift_inside(self, x):
         """Projects x to the KSupportNormBall w/ radius r.
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
@@ -586,6 +609,13 @@ class KSparsePolytope(Constraint):
         return v
 
     @torch.no_grad()
+    def npo(self, x, d_x, penalty):
+        """Returns v in KSparsePolytope w/ radius r minimizing [v*x + penalty*||v-x||^2]"""
+        super().npo(x, d_x, penalty)
+        y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
+        return self.lmo(-2*y)
+
+    @torch.no_grad()
     def shift_inside(self, x):
         """Projects x to the KSparsePolytope with radius r.
         NOTE: This is a valid projection, although not the one mapping to minimum distance points.
@@ -624,6 +654,11 @@ class L0Ball(Constraint):
         """Returns v with norm(v, self.p) <= r minimizing v*x"""
         super().lmo(x)
         raise NotImplementedError(f"LMO not implemented for L_0 Ball.")
+
+    @torch.no_grad()
+    def npo(self, x, d_x, penalty):
+        super().npo(x, d_x, penalty)
+        raise NotImplementedError("NPO not implemented for L0Ball.")
 
     @torch.no_grad()
     def shift_inside(self, x):
@@ -676,6 +711,11 @@ class KNormBall(Constraint):
         rhombus_value = torch.dot(rhombus_candidate.flatten(), x.flatten())
         cube_value = torch.dot(cube_candidate.flatten(), x.flatten())
         return rhombus_candidate if cube_value > rhombus_value else cube_candidate
+
+    @torch.no_grad()
+    def npo(self, x, d_x, penalty):
+        super().npo(x, d_x, penalty)
+        raise NotImplementedError("NPO not implemented for KNormBall.")
 
     @torch.no_grad()
     def shift_inside(self, x):
