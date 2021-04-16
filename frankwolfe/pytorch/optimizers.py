@@ -32,8 +32,8 @@ class SFW(torch.optim.Optimizer):
         if rescale == 'None': rescale = None
         if not (rescale in ['diameter', 'gradient', None]):
             raise ValueError(f"Rescale type must be either 'diameter', 'gradient' or None, got {rescale} of type {type(rescale)}.")
-        if rescale == 'gradient' and distance_penalty > 0:
-            raise NotImplementedError("Cannot use gradient rescaling and a distance_penalty > 0.")
+        #if rescale == 'gradient' and distance_penalty > 0:
+        #    raise NotImplementedError("Cannot use gradient rescaling and a distance_penalty > 0.")
 
         self.rescale = rescale
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
@@ -94,20 +94,18 @@ class SFW(torch.optim.Optimizer):
                         param_state['momentum_buffer'].mul_(momentum).add_(d_p, alpha=1 - dampening)
                     d_p = param_state['momentum_buffer']
 
-                # Determine learning rate rescaling factor
-                factor = 1  # Gradient rescaling has to be determined after calling the LMO, hence this doesn't work with NPO
-                if self.rescale == 'diameter':
-                    # Rescale lr by diameter
-                    factor = 1. / p.constraint.get_diameter()
-
                 # LMO solution
                 if self.distance_penalty > 0:
-                    penalty = self.distance_penalty*max(0.0, min(factor * group['lr'], 1.0))
-                    v = p.constraint.npo(x=p, d_x=d_p, penalty=penalty)
+                    v = p.constraint.npo(x=p, d_x=d_p, penalty=self.distance_penalty)
                 else:
                     v = p.constraint.lmo(d_p)  # LMO optimal solution
 
-                if self.rescale == 'gradient':
+                # Determine learning rate rescaling factor
+                factor = 1
+                if self.rescale == 'diameter':
+                    # Rescale lr by diameter
+                    factor = 1. / p.constraint.get_diameter()
+                elif self.rescale == 'gradient':
                     # Rescale lr by gradient
                     factor = torch.norm(d_p, p=2) / torch.norm(p - v, p=2)
 
@@ -140,22 +138,21 @@ class SFW(torch.optim.Optimizer):
             grad_list.append(d_p)
         grad_vec = torch.cat([g.view(-1) for g in grad_list])
 
-        # Determine learning rate rescaling factor
-        factor = 1  # Gradient rescaling has to be determined after calling the LMO, hence this doesn't work with NPO
-        if self.rescale == 'diameter':
-            # Rescale lr by diameter
-            factor = 1. / self.global_constraint.get_diameter()
-
         # LMO solution
         if self.distance_penalty > 0:
-            penalty = self.distance_penalty*max(0.0, min(factor * group['lr'], 1.0))
-            v = self.global_constraint.npo(x=torch.cat([p.view(-1) for p in param_list]), d_x=grad_vec, penalty=penalty)
+            v = self.global_constraint.npo(x=torch.cat([p.view(-1) for p in param_list]), d_x=grad_vec, penalty=self.distance_penalty)
         else:
             v = self.global_constraint.lmo(grad_vec)  # LMO optimal solution
 
-        if self.rescale == 'gradient':
+        # Determine learning rate rescaling factor
+        factor = 1
+        if self.rescale == 'diameter':
+            # Rescale lr by diameter
+            factor = 1. / self.global_constraint.get_diameter()
+        elif self.rescale == 'gradient':
             # Rescale lr by gradient
             factor = torch.norm(grad_vec, p=2) / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
+
         lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
 
         # Update parameters
