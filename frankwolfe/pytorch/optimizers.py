@@ -27,8 +27,8 @@ class SFW(torch.optim.Optimizer):
             raise ValueError(f"Momentum must be between 0 and 1, got {momentum} of type {type(momentum)}.")
         if not (0.0 <= dampening <= 1.0):
             raise ValueError("fDampening must be between 0 and 1, got {dampening} of type {type(dampening)}.")
-        if not 0.0 <= distance_penalty:
-            raise ValueError("NPO distance penalty must be non-negative or None.")
+        if not 0.0 <= distance_penalty <= 1.0:
+            raise ValueError("NPO distance penalty must be in [0,1] or None.")
         if rescale == 'None': rescale = None
         if not (rescale in ['diameter', 'gradient', None]):
             raise ValueError(f"Rescale type must be either 'diameter', 'gradient' or None, got {rescale} of type {type(rescale)}.")

@@ -390,7 +390,9 @@ class Constraint:
     @torch.no_grad()
     def get_npo_reformulation(self, x, d_x, penalty):
         # Computes the vector on which the LMO is called to solve the NPO, see Eq. 3 of Garber et al. (2021)
-        return x - (1./(2*penalty))*d_x
+        # Note: 1) Right now, this only works for norm-uniform feasible regions, i.e. where all vertices have the same euclidean norm
+        #       2) We use a convex formulation, io.e. min_{v\inV} (1-penalty)*v*d_x + penalty*||v-x||^2, as opposed to the original paper
+        return (1-penalty)*d_x - 2*penalty*x
 
     def shift_inside(self, x):
         assert x.numel() == self.n, f"shape {x.shape} does not match dimension {self.n}"
@@ -449,11 +451,10 @@ class LpBall(Constraint):
 
     @torch.no_grad()
     def npo(self, x, d_x, penalty):
-        """Returns v with norm(v, self.p) <= r minimizing [v*x + penalty*||v-x||^2]"""
+        """Returns v with norm(v, self.p) <= r minimizing [(1-penalty)*v*x + penalty*||v-x||^2]"""
         super().npo(x, d_x, penalty)
         y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
-        return self.lmo(-2*y)
-
+        return self.lmo(y)
 
     @torch.no_grad()
     def shift_inside(self, x):
@@ -537,10 +538,10 @@ class KSupportNormBall(Constraint):
 
     @torch.no_grad()
     def npo(self, x, d_x, penalty):
-        """Returns v in KSupportNormBall w/ radius r minimizing [v*x + penalty*||v-x||^2]"""
+        """Returns v in KSupportNormBall w/ radius r minimizing [(1-penalty)*v*x + penalty*||v-x||^2]"""
         super().npo(x, d_x, penalty)
         y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
-        return self.lmo(-2*y)
+        return self.lmo(y)
 
     @torch.no_grad()
     def shift_inside(self, x):
@@ -610,10 +611,10 @@ class KSparsePolytope(Constraint):
 
     @torch.no_grad()
     def npo(self, x, d_x, penalty):
-        """Returns v in KSparsePolytope w/ radius r minimizing [v*x + penalty*||v-x||^2]"""
+        """Returns v in KSparsePolytope w/ radius r minimizing [(1-penalty)*v*x + penalty*||v-x||^2]"""
         super().npo(x, d_x, penalty)
         y = super().get_npo_reformulation(x=x, d_x=d_x, penalty=penalty)
-        return self.lmo(-2*y)
+        return self.lmo(y)
 
     @torch.no_grad()
     def shift_inside(self, x):
