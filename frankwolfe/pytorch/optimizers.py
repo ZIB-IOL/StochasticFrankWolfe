@@ -58,6 +58,11 @@ class SFW(torch.optim.Optimizer):
                     if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
 
     @torch.no_grad()
+    def set_distance_penalty(self, penalty):
+        """Resets the distance penalty"""
+        self.distance_penalty = penalty
+
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
         Args:
