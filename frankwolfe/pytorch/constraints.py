@@ -512,6 +512,7 @@ class KSupportNormBall(Constraint):
         else:
             raise ValueError("Both diameter and radius given")
 
+        self.last_sparse_grad_norm = None
     def update_k(self, k: int) -> None:
         self.k = k
 
@@ -531,6 +532,7 @@ class KSupportNormBall(Constraint):
             minIndices = torch.topk(torch.abs(x.flatten()), k=d-self.k, largest=False).indices
             v.view(-1)[minIndices] = 0  # Projection to axis
         v_norm = float(torch.norm(v, p=2))
+        self.last_sparse_grad_norm = v_norm
         if v_norm > tolerance:
             return -self._radius * v.div(v_norm)    # Projection to Ball
         else:
@@ -599,6 +601,7 @@ class KSparsePolytope(Constraint):
             self._diameter = diameter
         else:
             raise ValueError("Both diameter and radius given")
+        self.last_sparse_grad_norm = None
 
     @torch.no_grad()
     def lmo(self, x):
@@ -606,6 +609,7 @@ class KSparsePolytope(Constraint):
         super().lmo(x)
         v = torch.zeros_like(x)
         maxIndices = torch.topk(torch.abs(x.flatten()), k=self.k).indices
+        self.last_sparse_grad_norm = float(torch.norm(x.view(-1)[maxIndices], p=2))
         v.view(-1)[maxIndices] = -self._radius * torch.sign(x.view(-1)[maxIndices])
         return v
 
