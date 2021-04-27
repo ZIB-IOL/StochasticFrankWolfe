@@ -513,6 +513,7 @@ class KSupportNormBall(Constraint):
             raise ValueError("Both diameter and radius given")
 
         self.last_sparse_grad_norm = None
+
     def update_k(self, k: int) -> None:
         self.k = k
 

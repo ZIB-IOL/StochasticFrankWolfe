@@ -30,7 +30,7 @@ class SFW(torch.optim.Optimizer):
         if not 0.0 <= distance_penalty <= 1.0:
             raise ValueError("NPO distance penalty must be in [0,1] or None.")
         if rescale == 'None': rescale = None
-        if not (rescale in ['diameter', 'gradient', None, 'sparse_gradient', 'normalized_gradient', 'sparse_normalized_gradient']):
+        if not (rescale in ['diameter', 'gradient', None, 'sparse_gradient', 'gradient_diameter', 'sparse_gradient_diameter', 'sparsity_distance']):
             raise ValueError(f"Rescale type must be either 'diameter', 'gradient' or None, got {rescale} of type {type(rescale)}.")
         #if rescale == 'gradient' and distance_penalty > 0:
         #    raise NotImplementedError("Cannot use gradient rescaling and a distance_penalty > 0.")
@@ -159,10 +159,17 @@ class SFW(torch.optim.Optimizer):
             factor = torch.norm(grad_vec, p=2) / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
         elif self.rescale == 'sparse_gradient':
             factor = self.global_constraint.last_sparse_grad_norm / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
-        elif self.rescale == 'normalized_gradient':
-            factor = torch.norm(grad_vec, p=2) / (torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2) / self.global_constraint.get_diameter())
-        elif self.rescale == 'sparse_normalized_gradient':
-            factor = self.global_constraint.last_sparse_grad_norm / (torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2) / self.global_constraint.get_diameter())
+        elif self.rescale == 'gradient_diameter':
+            factor = torch.norm(grad_vec, p=2) / self.global_constraint.get_diameter()
+        elif self.rescale == 'sparse_gradient_diameter':
+            factor = self.global_constraint.last_sparse_grad_norm / self.global_constraint.get_diameter()
+        """
+        elif self.rescale == 'sparsity_distance':
+            sparsity_norm = torch.norm(torch.cat([p.view(-1) for p in param_list])[v.view(-1) == 0], p=2)
+            sparsity_norm = max(sparsity_norm, 1e-8)
+            full_norm = max(torch.norm(torch.cat([p.view(-1) for p in param_list]), p=2), 1e-8)
+            factor = 1./(self.global_constraint.get_diameter() * sparsity_norm /full_norm)
+        """
 
         lr = max(0.0, min(factor * group['lr'], 1.0))  # Clamp between [0, 1]
 
