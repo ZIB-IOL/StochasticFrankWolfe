@@ -39,7 +39,10 @@ class SFW(torch.optim.Optimizer):
         self.global_constraint = global_constraint  # If not None, this points to the global constraint instance
         self.distance_penalty = distance_penalty
 
-        self.effective_lr = lr  # Just to catch this as a metric
+        self.effective_lr = lr
+        self.effective_lr_list = []  # Just to catch this as a metric
+        self.gradient_norm_list = []
+        self.gradient_normalizer_norm_list = []
 
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening)
@@ -56,6 +59,11 @@ class SFW(torch.optim.Optimizer):
                 for p in group['params']:
                     param_state = self.state[p]
                     if 'momentum_buffer' in param_state: del param_state['momentum_buffer']
+    @torch.no_grad()
+    def reset_it_lists(self):
+        self.effective_lr_list = []
+        self.gradient_norm_list = []
+        self.gradient_normalizer_norm_list = []
 
     @torch.no_grad()
     def set_distance_penalty(self, penalty):
@@ -156,7 +164,12 @@ class SFW(torch.optim.Optimizer):
             factor = 1. / self.global_constraint.get_diameter()
         elif self.rescale == 'gradient':
             # Rescale lr by gradient
-            factor = torch.norm(grad_vec, p=2) / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
+            grad_norm = torch.norm(grad_vec, p=2)
+            grad_normalizer_norm = torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
+            self.gradient_norm_list.append(float(grad_norm))
+            self.gradient_normalizer_norm_list.append(float(grad_normalizer_norm))
+
+            factor = grad_norm / grad_normalizer_norm
         elif self.rescale == 'sparse_gradient':
             factor = self.global_constraint.last_sparse_grad_norm / torch.norm(torch.cat([p.view(-1) for p in param_list]) - v, p=2)
         elif self.rescale == 'gradient_diameter':
@@ -179,7 +192,8 @@ class SFW(torch.optim.Optimizer):
             p.mul_(1 - lr)
             p.add_(v[:numberOfElements].view(p.shape), alpha=lr)
             v = v[numberOfElements:]
-        self.effective_lr = lr  # Just to catch this as a metric
+        self.effective_lr_list.append(lr)
+        self.effective_lr = lr # Just to catch this as a metric
 
 
 class SGD(torch.optim.Optimizer):
