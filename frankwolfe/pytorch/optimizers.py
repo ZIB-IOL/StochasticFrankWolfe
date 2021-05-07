@@ -192,7 +192,7 @@ class SFW(torch.optim.Optimizer):
             p.mul_(1 - lr)
             p.add_(v[:numberOfElements].view(p.shape), alpha=lr)
             v = v[numberOfElements:]
-        self.effective_lr_list.append(lr)
+        self.effective_lr_list.append(float(lr))
         self.effective_lr = lr # Just to catch this as a metric
 
 
