@@ -713,3 +713,80 @@ class Adagrad(ConstrainedOptimizer):
             'epsilon': self.epsilon,
         })
         return config
+
+class AMSGrad(ConstrainedOptimizer):
+    def __init__(
+        self,
+        learning_rate=0.01,
+        delta=1e-8,
+        beta1=0.9,
+        beta2=0.999,
+        name="AMSGrad",
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+
+        self._set_hyper("learning_rate", kwargs.get("lr", learning_rate))
+        self._set_hyper("delta", kwargs.get("delta", delta))
+        self._set_hyper("beta1", kwargs.get("b1", beta1))
+        self._set_hyper("beta2", kwargs.get("b2", beta2))
+
+    def set_learning_rate(self, learning_rate):
+        self._set_hyper("learning_rate", learning_rate)
+
+    def _resource_apply_dense(self, grad, var, constraint, apply_state):
+        grad = ops.convert_to_tensor(grad, var.dtype.base_dtype)
+
+        b1 = math_ops.cast(self._get_hyper("beta1"), var.dtype.base_dtype)
+        m_accumulator = self.get_slot(var, "m_accumulator")
+        momentum = m_accumulator.assign(b1 * m_accumulator + (1 - b1) * grad)
+
+        b2 = math_ops.cast(self._get_hyper("beta2"), var.dtype.base_dtype)
+        v_accumulator = self.get_slot(var, "v_accumulator")
+        v_accumulator.assign(b2 * v_accumulator + (1 - b2) * math_ops.square(grad))
+
+        vhat_accumulator = self.get_slot(var, "vhat_accumulator")
+        vhat_accumulator.assign(tf.math.maximum(vhat_accumulator, v_accumulator))
+
+        delta = math_ops.cast(self._get_hyper("delta"), var.dtype.base_dtype)
+        H = math_ops.add(delta, math_ops.sqrt(vhat_accumulator))
+        sqrtH = math_ops.sqrt(H)
+
+        learning_rate = math_ops.cast(
+            self._get_hyper("learning_rate"), var.dtype.base_dtype
+        )
+
+        project_var = constraint.qmo(
+            sqrtH * var - learning_rate * momentum / sqrtH, 1 / sqrtH
+        )
+        return state_ops.assign(var, project_var / sqrtH)
+
+    def _create_slots(self, var_list):
+        for var in var_list:
+            self.add_slot(
+                var,
+                "m_accumulator",
+                init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype),
+            )
+            self.add_slot(
+                var,
+                "v_accumulator",
+                init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype),
+            )
+            self.add_slot(
+                var,
+                "vhat_accumulator",
+                init_ops.constant_initializer(0.0, dtype=var.dtype.base_dtype),
+            )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            dict(
+                learning_rate=self._serialize_hyperparameter("learning_rate"),
+                delta=self._serialize_hyperparameter("delta"),
+                beta1=self._serialize_hyperparameter("beta1"),
+                beta2=self._serialize_hyperparameter("beta2"),
+            )
+        )
+        return config
